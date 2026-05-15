@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- This URDF was automatically created by SolidWorks to URDF Exporter! Originally created by Stephen Brawner (brawner@gmail.com) 
+     Commit Version: 1.6.0-4-g7f85cfe  Build Version: 1.6.7995.38578
+     For more information, please see http://wiki.ros.org/sw_urdf_exporter -->
+<robot
+  name="示意图1">
+  <link
+    name="base_link">
+    <inertial>
+      <origin
+        xyz="-5.80651420509017E-05 -0.107386182161479 0.0600231444304502"
+        rpy="0 0 0" />
+      <mass
+        value="3.25904698235386" />
+      <inertia
+        ixx="0.320634970699456"
+        ixy="8.54869607680249E-07"
+        ixz="3.46204010512505E-07"
+        iyy="0.275641893937491"
+        iyz="0.111045304989797"
+        izz="0.0464480147358591" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="../meshes/gun.stl" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="../meshes/gun.stl" />
+      </geometry>
+    </collision>
+  </link>
+</robot>
