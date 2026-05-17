@@ -1108,5 +1108,26 @@
     <dynamics damping="1" friction="1" />
   </joint> 
 
+  
+  <!-- dummy target -->
+
+  <link name="dummy_target">
+    <inertial>
+      <origin xyz="0 0.0 0" rpy="0 0 0" />
+      <mass value="0" />
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0" />
+    </inertial>
+  </link>
+
+  <joint name="link_dummy_target_joint" type="fixed" dont_collapse="true">
+    <parent link="link06" />
+    <child link="dummy_target" />
+
+    <origin xyz="0.1 0 0"
+            rpy="0 0 0"/>
+
+    <axis xyz="1 0 0" />
+  </joint>
+
 
 </robot>

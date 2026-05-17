@@ -121,7 +121,7 @@ B2_Z1_GUN_CFG = UnitreeArticulationCfg(
             
             # z1
             "joint1": 0.0,
-            "joint2": 0.0, 
+            "joint2": 0.1, 
             "joint3": -0.1,
             "joint4": 0.0,
             "joint5": 0.0,
@@ -150,10 +150,10 @@ B2_Z1_GUN_CFG = UnitreeArticulationCfg(
         
         "z1_motor1": ImplicitActuatorCfg(
             joint_names_expr=["joint1", "joint3", "joint4", "joint5", "joint6"],
-            stiffness=5.0,
-            damping=0.5,
-            friction=0.01,
+            stiffness=60.0,
+            damping=1.0,
             
+            friction=0.01,
             effort_limit_sim=30.0,
             velocity_limit_sim=3.1415,
             
@@ -161,14 +161,15 @@ B2_Z1_GUN_CFG = UnitreeArticulationCfg(
         
         "z1_motor2": ImplicitActuatorCfg(
             joint_names_expr=["joint2"],
-            stiffness=5.0,
-            damping=0.5,
+            stiffness=60.0,
+            damping=1.0,
+            
+            
             friction=0.01,
-            
             effort_limit_sim=60.0,
-            velocity_limit_sim=3.1415,
-            
+            velocity_limit_sim=3.1415,    
         ),
+        
     },
 )
 
@@ -195,7 +196,7 @@ B2_Z1_CFG = UnitreeArticulationCfg(
             
             # z1
             "joint1": 0.0,
-            "joint2": 0.0, 
+            "joint2": 0.1, 
             "joint3": -0.1,
             "joint4": 0.0,
             "joint5": 0.0,
@@ -224,10 +225,10 @@ B2_Z1_CFG = UnitreeArticulationCfg(
         
         "z1_motor1": ImplicitActuatorCfg(
             joint_names_expr=["joint1", "joint3", "joint4", "joint5", "joint6"],
-            stiffness=5.0,
-            damping=0.5,
-            friction=0.01,
+            stiffness=100.0,
+            damping=2.0,
             
+            friction=0.01,
             effort_limit_sim=30.0,
             velocity_limit_sim=3.1415,
             
@@ -235,15 +236,14 @@ B2_Z1_CFG = UnitreeArticulationCfg(
         
         "z1_motor2": ImplicitActuatorCfg(
             joint_names_expr=["joint2"],
-            stiffness=5.0,
-            damping=0.5,
+            stiffness=100.0,
+            damping=2.0,
+            
+            
             friction=0.01,
-            
             effort_limit_sim=60.0,
-            velocity_limit_sim=3.1415,
-            
+            velocity_limit_sim=3.1415,    
         ),
-        
         
     },
 )

@@ -31,6 +31,7 @@ from . import mdp
 ##
 
 from b2_z1.assets.unitree import B2_Z1_GUN_CFG
+# from b2_z1.assets.unitree import B2_Z1_CFG
 
 
 
@@ -91,26 +92,32 @@ class B2Z1SceneCfg(InteractiveSceneCfg):
 
     # ground plane
     terrain = TerrainImporterCfg(
+        # prim_path="/World/ground",
+        # terrain_type="generator",  # "plane", "generator"
+        # terrain_generator=COBBLESTONE_ROAD_CFG,  # None, ROUGH_TERRAINS_CFG
+        # max_init_terrain_level=2,
+        # collision_group=-1,
+        
         prim_path="/World/ground",
-        terrain_type="generator",  # "plane", "generator"
-        terrain_generator=COBBLESTONE_ROAD_CFG,  # None, ROUGH_TERRAINS_CFG
-        max_init_terrain_level=2,
+        terrain_type="plane",
         collision_group=-1,
+        
         physics_material=sim_utils.RigidBodyMaterialCfg(
             friction_combine_mode="multiply",
             restitution_combine_mode="multiply",
             static_friction=1.0,
             dynamic_friction=1.0,
         ),
-        visual_material=sim_utils.MdlFileCfg(
-            mdl_path=f"{ISAACLAB_NUCLEUS_DIR}/Materials/TilesMarbleSpiderWhiteBrickBondHoned/TilesMarbleSpiderWhiteBrickBondHoned.mdl",
-            project_uvw=True,
-            texture_scale=(0.25, 0.25),
-        ),
+        # visual_material=sim_utils.MdlFileCfg(
+        #     mdl_path=f"{ISAACLAB_NUCLEUS_DIR}/Materials/TilesMarbleSpiderWhiteBrickBondHoned/TilesMarbleSpiderWhiteBrickBondHoned.mdl",
+        #     project_uvw=True,
+        #     texture_scale=(0.25, 0.25),
+        # ),
         debug_vis=False,
     )
 
     # robot
+    # robot: ArticulationCfg = B2_Z1_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
     robot: ArticulationCfg = B2_Z1_GUN_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
     
     
@@ -125,7 +132,7 @@ class B2Z1SceneCfg(InteractiveSceneCfg):
     # )
     
     contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=3, 
-                                      track_air_time=True, debug_vis=True)
+                                      track_air_time=True, debug_vis=False)
     
     
 
@@ -296,12 +303,15 @@ class CommandsCfg:
     
     ee_target = mdp.UniformPoseCommandCfg(
         asset_name="robot",
-        resampling_time_range=(10.0, 10.0),
+        resampling_time_range=(2.0, 4.0),
         body_name="dummy_target",
         debug_vis=True,
         ranges=mdp.UniformPoseCommandCfg.Ranges(
-            pos_x=(0.65, 0.65), pos_y=(-0.2, 0.2), pos_z=(-0.4, -0.2), 
-            roll=(-0, 0), pitch=(0.7854, 1.3090), yaw=(-0, 0)
+            # pos_x=(0.65, 0.65), pos_y=(-0.2, 0.2), pos_z=(-0.4, -0.2), 
+            pos_x=(0.6, 0.75), pos_y=(-0.4, 0.4), pos_z=(-0.4, -0.1), 
+            
+            # pos_x=(0.35, 0.5), pos_y=(-0.2, 0.2), pos_z=(0.1, 0.3), 
+            roll=(-0, 0), pitch=(0.7854, 1.5708), yaw=(-0, 0)
         ),
     )
     
@@ -370,17 +380,6 @@ class RewardsCfg:
         params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot")},
     )
     
-    joint_pos = RewTerm(
-        func=mdp.joint_position_penalty,
-        weight=-0.7,
-        params={
-            "asset_cfg": SceneEntityCfg("robot", joint_names="(?!joint[1-6]$).*$"),
-            "stand_still_scale": 5.0,
-            "velocity_threshold": 0.3,
-        },
-    )
-    
-    
     # -- Misc
     dof_acc_l2 = RewTerm(func=mdp.joint_acc_l2, weight=-2.5e-7)
     action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-0.01)
@@ -391,7 +390,13 @@ class RewardsCfg:
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=".*")},
     )
     action_smoothness = RewTerm(func=mdp.smoothness, weight=-0.01)
-
+    
+    
+    undesired_contacts = RewTerm(
+        func=mdp.uncontacts,
+        weight=-1.0,
+        params={"threshold": 1.0, "sensor_cfg": SceneEntityCfg("contact_forces", body_names="link_gun")},
+    )
 
 
 @configclass
@@ -411,25 +416,25 @@ class TerminationsCfg:
 class CurriculumCfg:
     """Curriculum terms for the MDP."""
 
-    terrain_levels = CurrTerm(func=mdp.terrain_levels_vel)
+    # terrain_levels = CurrTerm(func=mdp.terrain_levels_vel)
     lin_vel_cmd_levels = CurrTerm(mdp.lin_vel_cmd_levels)
     
     
-    # curriculum for end-effector position tracking
-    end_effector_position_tracking = CurrTerm(
-        func=mdp.modify_reward_weight,
-        params={"term_name": "end_effector_position_tracking", "weight": -1.2, "num_steps": 60_000}, 
-    )
+    # # curriculum for end-effector position tracking
+    # end_effector_position_tracking = CurrTerm(
+    #     func=mdp.modify_reward_weight,
+    #     params={"term_name": "end_effector_position_tracking", "weight": -1.2, "num_steps": 60_000}, 
+    # )
     
-    end_effector_position_tracking_fine_grained = CurrTerm(
-        func=mdp.modify_reward_weight,
-        params={"term_name": "end_effector_position_tracking_fine_grained", "weight": 1.75, "num_steps": 60_000}, 
-    )   
+    # end_effector_position_tracking_fine_grained = CurrTerm(
+    #     func=mdp.modify_reward_weight,
+    #     params={"term_name": "end_effector_position_tracking_fine_grained", "weight": 1.75, "num_steps": 60_000}, 
+    # )   
     
-    end_effector_orientation_tracking = CurrTerm(
-        func=mdp.modify_reward_weight,
-        params={"term_name": "end_effector_orientation_tracking", "weight": -1.5, "num_steps": 60_000}, 
-    )
+    # end_effector_orientation_tracking = CurrTerm(
+    #     func=mdp.modify_reward_weight,
+    #     params={"term_name": "end_effector_orientation_tracking", "weight": -1.5, "num_steps": 60_000}, 
+    # )
 
 ##
 # Environment configuration
@@ -459,9 +464,22 @@ class B2Z1EnvCfg(ManagerBasedRLEnvCfg):
         # # viewer settings
         # self.viewer.eye = (8.0, 0.0, 5.0)
         # simulation settings
+        # self.sim.render_interval = self.decimation
+        # self.sim.physics_material = self.scene.terrain.physics_material
+        # self.sim.physx.gpu_max_rigid_patch_count = 10 * 2**15
+
+         
+        # simulation settings 
+        self.sim.dt = 0.005
         self.sim.render_interval = self.decimation
         self.sim.physics_material = self.scene.terrain.physics_material
-        self.sim.physx.gpu_max_rigid_patch_count = 10 * 2**15
+        
+        # PhysX settings
+        self.sim.physx.solver_type = 1  # TGS solver
+        self.sim.physx.max_position_iteration_count = 4 
+        self.sim.physx.max_velocity_iteration_count = 0 
+        self.sim.physx.bounce_threshold_velocity = 0.5
+
 
         # update sensor update periods
         # we tick all the sensors based on the smallest update period (physics update period)
@@ -476,20 +494,21 @@ class B2Z1EnvCfg(ManagerBasedRLEnvCfg):
         self.rewards.track_ang_vel_z.weight = 1.5
         
         self.rewards.base_height_l2.weight = -5.0
-        self.rewards.end_effector_position_tracking.weight = 0.0
-        self.rewards.end_effector_position_tracking_fine_grained.weight = 0.0
-        self.rewards.end_effector_orientation_tracking.weight = 0.0
+        self.rewards.end_effector_position_tracking.weight = -1.2
+        self.rewards.end_effector_position_tracking_fine_grained.weight = 1.75
+        self.rewards.end_effector_orientation_tracking.weight = -1.5
         
         
 
-        # check if terrain levels curriculum is enabled - if so, enable curriculum for terrain generator
-        # this generates terrains with increasing difficulty and is useful for training
-        if getattr(self.curriculum, "terrain_levels", None) is not None:
-            if self.scene.terrain.terrain_generator is not None:
-                self.scene.terrain.terrain_generator.curriculum = True
-        else:
-            if self.scene.terrain.terrain_generator is not None:
-                self.scene.terrain.terrain_generator.curriculum = False
+        # # check if terrain levels curriculum is enabled - if so, enable curriculum for terrain generator
+        # # this generates terrains with increasing difficulty and is useful for training
+        
+        # if getattr(self.curriculum, "terrain_levels", None) is not None:
+        #     if self.scene.terrain.terrain_generator is not None:
+        #         self.scene.terrain.terrain_generator.curriculum = True
+        # else:
+        #     if self.scene.terrain.terrain_generator is not None:
+        #         self.scene.terrain.terrain_generator.curriculum = False
                 
                 
 @configclass
@@ -497,6 +516,11 @@ class B2Z1PlayEnvCfg(B2Z1EnvCfg):
     def __post_init__(self):
         super().__post_init__()
         self.scene.num_envs = 32
-        self.scene.terrain.terrain_generator.num_rows = 2
-        self.scene.terrain.terrain_generator.num_cols = 1
+        # self.scene.terrain.terrain_generator.num_rows = 2
+        # self.scene.terrain.terrain_generator.num_cols = 1
+        
         self.commands.base_velocity.ranges = self.commands.base_velocity.limit_ranges
+        self.commands.base_velocity.ranges.lin_vel_x = (0.2, 0.5)
+        self.commands.base_velocity.ranges.lin_vel_y = (-0.4, 0.4)
+        self.commands.base_velocity.ranges.ang_vel_z = (-0.0, 0.0)
+        

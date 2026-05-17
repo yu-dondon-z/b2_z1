@@ -43,7 +43,7 @@ COBBLESTONE_ROAD_CFG = terrain_gen.TerrainGeneratorCfg(
     vertical_scale=0.005,
     slope_threshold=0.75,
     difficulty_range=(0.0, 1.0),
-    use_cache=True,
+    use_cache=False,
     sub_terrains={
         "flat": terrain_gen.MeshPlaneTerrainCfg(proportion=0.1),
         
@@ -115,14 +115,14 @@ class B2Z1SceneCfg(InteractiveSceneCfg):
     
     
     # # sensors
-    height_scanner = RayCasterCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/base_link",
-        offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 20.0)),
-        ray_alignment="yaw",
-        pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=[1.6, 1.0]),
-        debug_vis=False,
-        mesh_prim_paths=["/World/ground"],
-    )
+    # height_scanner = RayCasterCfg(
+    #     prim_path="{ENV_REGEX_NS}/Robot/base_link",
+    #     offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 20.0)),
+    #     ray_alignment="yaw",
+    #     pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=[1.6, 1.0]),
+    #     debug_vis=False,
+    #     mesh_prim_paths=["/World/ground"],
+    # )
     
     contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=3, 
                                       track_air_time=True, debug_vis=True)
@@ -151,7 +151,6 @@ class ActionsCfg:
     JointPositionAction = mdp.JointPositionActionCfg(
         asset_name="robot", joint_names=[".*"], scale=0.25, use_default_offset=True, clip={".*": (-100.0, 100.0)}
     )
-
 
 @configclass
 class ObservationsCfg:
@@ -188,7 +187,18 @@ class ObservationsCfg:
         base_lin_vel = ObsTerm(func=mdp.base_lin_vel, clip=(-100, 100), noise=Unoise(n_min=-0.1, n_max=0.1))
         joint_effort = ObsTerm(func=mdp.joint_effort, scale=0.01, clip=(-100, 100))
         
-        # 45+3
+        base_external_force = ObsTerm(
+            func=mdp.base_external_force,
+            params={"asset_cfg": SceneEntityCfg("robot", body_names="base_link")},
+            scale=0.1,
+            clip=(-100, 100),
+        )
+        
+        # height_scanner = ObsTerm(func=mdp.height_scan,
+        #     params={"sensor_cfg": SceneEntityCfg("height_scanner")},
+        #     clip=(-1.0, 5.0),
+        # )
+        
     
     # privileged observations
     critic: CriticCfg = CriticCfg()
@@ -274,17 +284,14 @@ class CommandsCfg:
     base_velocity = mdp.UniformLevelVelocityCommandCfg(
         asset_name="robot",
         resampling_time_range=(10.0, 10.0),
-        rel_standing_envs=0.1,
+        rel_standing_envs=0.25,
         debug_vis=True,
         ranges=mdp.UniformLevelVelocityCommandCfg.Ranges(
             lin_vel_x=(-0.1, 0.1), lin_vel_y=(-0.1, 0.1), ang_vel_z=(-1, 1)
         ),
         limit_ranges=mdp.UniformLevelVelocityCommandCfg.Ranges(
-            lin_vel_x=(-1.0, 1.0), lin_vel_y=(-0.4, 0.4), ang_vel_z=(-1.0, 1.0)
+            lin_vel_x=(-0.1, 0.6), lin_vel_y=(-0.4, 0.4), ang_vel_z=(-1.0, 1.0)
         ),
-        
-        
-        
     )
     
     # ee_target = mdp.UniformPoseCommandCfg(
@@ -293,8 +300,8 @@ class CommandsCfg:
     #     body_name="dummy_target",
     #     debug_vis=True,
     #     ranges=mdp.UniformPoseCommandCfg.Ranges(
-    #         pos_x=(0.3, 0.3), pos_y=(-0.0, 0.0), pos_z=(0.3, 0.3), 
-    #         roll=(-0, 0), pitch=(-0, 0), yaw=(-0, 0)
+    #         pos_x=(0.65, 0.65), pos_y=(-0.2, 0.2), pos_z=(-0.4, -0.2), 
+    #         roll=(-0, 0), pitch=(0.7854, 1.3090), yaw=(-0, 0)
     #     ),
     # )
     
@@ -347,6 +354,33 @@ class RewardsCfg:
         weight=-1.5
     )
     
+    # -- feet
+    feet_air_time = RewTerm(
+        func=mdp.feet_air_time,
+        weight=0.25,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
+            "command_name": "base_velocity",
+            "threshold": 0.5,
+        },
+    )
+    air_time_variance = RewTerm(
+        func=mdp.air_time_variance_penalty,
+        weight=-1.0,
+        params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot")},
+    )
+    
+    # joint_pos = RewTerm(
+    #     func=mdp.joint_position_penalty,
+    #     weight=-0.7,
+    #     params={
+    #         "asset_cfg": SceneEntityCfg("robot", joint_names="(?!joint[1-6]$).*$"),
+    #         "stand_still_scale": 5.0,
+    #         "velocity_threshold": 0.3,
+    #     },
+    # )
+    
+    
     # -- Misc
     dof_acc_l2 = RewTerm(func=mdp.joint_acc_l2, weight=-2.5e-7)
     action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-0.01)
@@ -367,9 +401,10 @@ class TerminationsCfg:
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
     base_contact = DoneTerm(
         func=mdp.illegal_contact,
-        params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=["base_link"]), "threshold": 1.0},
+        params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="base_link"), "threshold": 1.0},
     )
-    # bad_orientation = DoneTerm(func=mdp.bad_orientation, params={"limit_angle": 0.8})
+    # ".*_thigh"
+    bad_orientation = DoneTerm(func=mdp.bad_orientation, params={"limit_angle": 0.8})
 
 
 @configclass
@@ -378,7 +413,23 @@ class CurriculumCfg:
 
     terrain_levels = CurrTerm(func=mdp.terrain_levels_vel)
     lin_vel_cmd_levels = CurrTerm(mdp.lin_vel_cmd_levels)
-
+    
+    
+    # # curriculum for end-effector position tracking
+    # end_effector_position_tracking = CurrTerm(
+    #     func=mdp.modify_reward_weight,
+    #     params={"term_name": "end_effector_position_tracking", "weight": -1.2, "num_steps": 60_000}, 
+    # )
+    
+    # end_effector_position_tracking_fine_grained = CurrTerm(
+    #     func=mdp.modify_reward_weight,
+    #     params={"term_name": "end_effector_position_tracking_fine_grained", "weight": 1.75, "num_steps": 60_000}, 
+    # )   
+    
+    # end_effector_orientation_tracking = CurrTerm(
+    #     func=mdp.modify_reward_weight,
+    #     params={"term_name": "end_effector_orientation_tracking", "weight": -1.5, "num_steps": 60_000}, 
+    # )
 
 ##
 # Environment configuration
@@ -408,14 +459,40 @@ class B2Z1EnvCfg(ManagerBasedRLEnvCfg):
         # # viewer settings
         # self.viewer.eye = (8.0, 0.0, 5.0)
         # simulation settings
+        # self.sim.render_interval = self.decimation
+        # self.sim.physics_material = self.scene.terrain.physics_material
+        # self.sim.physx.gpu_max_rigid_patch_count = 10 * 2**15
+        
+        
+        # simulation settings 
+        self.sim.dt = 0.005
         self.sim.render_interval = self.decimation
         self.sim.physics_material = self.scene.terrain.physics_material
-        self.sim.physx.gpu_max_rigid_patch_count = 10 * 2**15
+        
+        # PhysX settings
+        self.sim.physx.solver_type = 1  # TGS solver
+        self.sim.physx.max_position_iteration_count = 4
+        self.sim.physx.max_velocity_iteration_count = 0
+        self.sim.physx.bounce_threshold_velocity = 0.5
 
         # update sensor update periods
         # we tick all the sensors based on the smallest update period (physics update period)
         self.scene.contact_forces.update_period = self.sim.dt
-        self.scene.height_scanner.update_period = self.decimation * self.sim.dt
+        # self.scene.height_scanner.update_period = self.decimation * self.sim.dt
+        
+        
+        
+        
+        # reward settings
+        self.rewards.track_lin_vel_xy.weight = 2.75
+        self.rewards.track_ang_vel_z.weight = 1.5
+        
+        self.rewards.base_height_l2.weight = -5.0
+        # self.rewards.end_effector_position_tracking.weight = 0.0
+        # self.rewards.end_effector_position_tracking_fine_grained.weight = 0.0
+        # self.rewards.end_effector_orientation_tracking.weight = 0.0
+        
+        
 
         # check if terrain levels curriculum is enabled - if so, enable curriculum for terrain generator
         # this generates terrains with increasing difficulty and is useful for training

@@ -1157,6 +1157,7 @@
           filename="gun/meshes/gun_base_shifted.stl" />
       </geometry>
     </collision> -->
+
     <collision>
       <origin xyz="0.003 -0.01 -0.055" rpy="0.385 0 0" />
       <geometry>
