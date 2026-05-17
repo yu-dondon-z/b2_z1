@@ -76,3 +76,4 @@ logs/
 outputs/
 .vscode/
 *.tar*
+test/
