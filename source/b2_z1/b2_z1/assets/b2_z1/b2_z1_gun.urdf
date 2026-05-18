@@ -1176,47 +1176,6 @@
     <dynamics damping="1" friction="1" />
   </joint>
 
-<!-- gun target -->
-
-  <!-- <link name="link_gun_target_base">
-    <inertial>
-      <origin xyz="0 0.0 0" rpy="0 0 0" />
-      <mass value="0" />
-      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0" />
-    </inertial>
-  </link>
-
-
-  <joint name="joint_base_gun_target" type="fixed">
-    <parent link="link_gun" />
-    <child link="link_gun_target_base" />
-    <origin xyz="0.0 0.21 -0.6" rpy="0.7854 1.5708 -0.7854" />  
-    <axis xyz="1 0 0 " />
-    <limit lower="-3.141592653589793" upper="3.141592653589793" effort="30" velocity="3.1415" />
-    <dynamics damping="1" friction="1" />
-  </joint> -->
-
-
-  <!-- dummy target -->
-
-  <!-- <link name="link_dummy_target">
-    <inertial>
-      <origin xyz="0 0.0 0" rpy="0 0 0" />
-      <mass value="0" />
-      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0" />
-    </inertial>
-  </link>
-
-
-  <joint name="link_dummy_target_joint" type="fixed">
-    <parent link="link_gun_target_base" />
-    <child link="link_dummy_target" />
-    <origin xyz="0.0 0.0 0.0" rpy="0.0 0.5236 0.0" />  
-    <axis xyz="1 0 0 " />
-    <limit lower="-3.141592653589793" upper="3.141592653589793" effort="30" velocity="3.1415" />
-    <dynamics damping="1" friction="1" />
-  </joint> -->
-
 
   <!-- dummy target -->
 
