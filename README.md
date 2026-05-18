@@ -12,6 +12,14 @@ It allows you to develop in an isolated environment, outside of the core Isaac L
 
 **Keywords:** extension, template, isaaclab
 
+
+
+## Test Environment
+
+- OS: Ubuntu 22.04
+- Isaac Sim: 5.0
+- Isaac Lab: 2.2.1
+
 ## Installation
 
 - Install Isaac Lab by following the [installation guide](https://isaac-sim.github.io/IsaacLab/main/source/setup/installation/index.html).
