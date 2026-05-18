@@ -49,7 +49,7 @@ It allows you to develop in an isolated environment, outside of the core Isaac L
         python scripts/rsl_rl/train.py --task="Unitree-b2z1-Velocity" --headless --num_envs=4096
 
         (play)
-        python --task="Unitree-b2z1-Velocity-Play" --load_run="(saved in logs)" --num_envs=64
+        python scripts/rsl_rl/play.py --task="Unitree-b2z1-Velocity-Play" --load_run="(saved in logs)" --num_envs=64
 
 
         ```
