@@ -900,10 +900,13 @@
   </joint>
 
 <!-- z1 arm  -->
-  <joint name="joint0" type="fixed">
+  <joint name="joint0" type="fixed" dont_collapse="true">
       <parent link="base_link" />
       <child link="link00" />
-      <origin xyz="0 0 0.09" rpy="0 0 0" />
+      <!-- <origin xyz="0 0 0.09" rpy="0 0 0" /> -->
+
+      <origin xyz="0 0 0.09" rpy="0 0 1.5708" />
+
       <axis xyz="0 0 1" />
       <limit lower="-2.6179939" upper="2.6179939" effort="30" velocity="3.1415" />
       <dynamics damping="1" friction="1" />
@@ -1138,10 +1141,16 @@
       <origin
         xyz="0 0 0"
         rpy="0 0 0" />
-      <geometry>
+      <!-- <geometry>
         <mesh
           filename="gun/meshes/gun_base_shifted.stl" />
+      </geometry> -->
+
+      <geometry>
+        <mesh
+          filename="gun/meshes/gun_base_shifted_center.stl" />
       </geometry>
+
       <material
         name="">
         <color
@@ -1159,7 +1168,8 @@
     </collision> -->
 
     <collision>
-      <origin xyz="0.003 -0.01 -0.055" rpy="0.385 0 0" />
+      <!-- <origin xyz="0.003 -0.01 -0.055" rpy="0.385 0 0" /> -->
+      <origin xyz="0.003 -0.032 -0.05" rpy="0 0 0" />
       <geometry>
         <cylinder radius="0.028" length="1.1" />
       </geometry>
@@ -1170,7 +1180,9 @@
   <joint name="joint_gun_mounter" type="fixed" dont_collapse="true">
     <parent link="link_mounter" />
     <child link="link_gun" />
-    <origin xyz="0.0 0 0.05" rpy="-1.5708 0 1.5708" />
+    <!-- <origin xyz="0.0 0 0.05" rpy="-1.5708 0 1.5708" /> -->
+    <origin xyz="0.0 0 0.05" rpy="0 0 1.5708" />
+ 
     <axis xyz="1 0 0" />
     <limit lower="-2.7925268" upper="2.7925268" effort="30" velocity="3.1415" />
     <dynamics damping="1" friction="1" />
@@ -1191,8 +1203,11 @@
     <parent link="link_gun" />
     <child link="dummy_target" />
 
-    <origin xyz="0.0 0.21 -0.6"
-            rpy="-3.14159 1.0472 1.5708"/>
+      <!-- <origin xyz="0.0 -0.03 -0.62"
+        rpy="-3.14159 1.0472 1.5708"/> -->
+        
+      <origin xyz="0.0 -0.03 -0.62" rpy="-3.14159 1.5708 1.5708" />
+
 
     <axis xyz="1 0 0" />
   </joint>
