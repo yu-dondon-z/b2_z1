@@ -43,6 +43,8 @@ class UniformPoseWBCCommandCfg(UniformPoseCommandBaseCfg):
     curriculum_enabled: bool = False
     trajectory_num_points: int = 10
     """Number of points used to visualize the interpolation curve and tracked path."""
+    trajectory_point_spacing: float = 0.02
+    """Minimum distance in meters between two recorded end-effector trajectory markers."""
     tracking_pose_visualizer_cfg = _build_tracking_pose_visualizer_cfg()
     interpolation_curve_visualizer_cfg = _build_interpolation_curve_visualizer_cfg()
     tracked_trajectory_visualizer_cfg = _build_tracked_trajectory_visualizer_cfg()

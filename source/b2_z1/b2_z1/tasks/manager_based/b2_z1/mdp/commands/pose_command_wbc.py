@@ -65,10 +65,12 @@ class UniformPoseWBCCommand(CommandTerm):
         self.target_pose_w[:, 3] = 1.0
         self.tracking_pose_w = torch.zeros_like(self.pose_command)
         self.tracking_pose_w[:, 3] = 1.0
+        self._curve_control_points = torch.zeros(self.num_envs, 2, 3, device=self.device)
 
         self._trajectory_num_points = max(2, getattr(cfg, "trajectory_num_points", 10))
         self._trajectory_samples = torch.linspace(0.0, 1.0, self._trajectory_num_points, device=self.device)
         self._command_duration = torch.ones(self.num_envs, device=self.device)
+        self._trajectory_point_spacing = getattr(cfg, "trajectory_point_spacing", 0.02)
         self.interpolation_curve_positions_w = torch.zeros(
             self.num_envs, self._trajectory_num_points, 3, device=self.device
         )
@@ -76,6 +78,9 @@ class UniformPoseWBCCommand(CommandTerm):
             self.num_envs, self._trajectory_num_points, 4, device=self.device
         )
         self.interpolation_curve_orientations_w[..., 0] = 1.0
+        self.tracked_trajectory_positions = torch.zeros(
+            self.num_envs, self._trajectory_num_points, 3, device=self.device
+        )
         self.tracked_trajectory_positions_w = torch.zeros(
             self.num_envs, self._trajectory_num_points, 3, device=self.device
         )
@@ -83,6 +88,7 @@ class UniformPoseWBCCommand(CommandTerm):
             self.num_envs, self._trajectory_num_points, 4, device=self.device
         )
         self.tracked_trajectory_orientations_w[..., 0] = 1.0
+        self._tracked_trajectory_counts = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
 
         self.metrics["position_error"] = torch.zeros(self.num_envs, device=self.device)
         self.metrics["orientation_error"] = torch.zeros(self.num_envs, device=self.device)
@@ -128,17 +134,17 @@ class UniformPoseWBCCommand(CommandTerm):
 
         self._capture_current_pose_as_start(env_ids)
         self._sample_target_pose(env_ids)
+        self._sample_curve_control_points(env_ids)
         self._command_duration[env_ids] = self.time_left[env_ids].clamp_min(self.env.step_dt)
         self.pose_command[env_ids, :3] = self.pose_start[env_ids, :3]
         self.pose_command[env_ids, 3:] = self.pose_target[env_ids, 3:]
+        self._reset_tracked_trajectory(env_ids)
 
     def _update_command(self):
         interpolation_progress = 1.0 - self.time_left / self._command_duration.clamp_min(self.env.step_dt)
         interpolation_progress = interpolation_progress.clamp_(0.0, 1.0).unsqueeze(-1)
 
-        self.pose_command[:, :3] = torch.lerp(
-            self.pose_start[:, :3], self.pose_target[:, :3], interpolation_progress
-        )
+        self.pose_command[:, :3] = self._evaluate_curve(interpolation_progress)
         self.pose_command[:, 3:] = self.pose_target[:, 3:]
 
     def _sample_target_pose(self, env_ids: torch.Tensor):
@@ -180,6 +186,69 @@ class UniformPoseWBCCommand(CommandTerm):
         self.pose_start[env_ids, 2] = ee_pos_w[:, 2]
         self.pose_start[env_ids, 3:] = quat_mul(quat_conjugate(link0_quat_w), ee_quat_w)
 
+    def _sample_curve_control_points(self, env_ids: torch.Tensor):
+        start_pos = self.pose_start[env_ids, :3]
+        target_pos = self.pose_target[env_ids, :3]
+        delta = target_pos - start_pos
+        length = torch.linalg.norm(delta, dim=-1, keepdim=True).clamp_min(1.0e-4)
+        tangent = delta / length
+
+        z_axis = torch.zeros_like(tangent)
+        z_axis[:, 2] = 1.0
+        x_axis = torch.zeros_like(tangent)
+        x_axis[:, 0] = 1.0
+        use_x_axis = torch.abs(torch.sum(tangent * z_axis, dim=-1, keepdim=True)) > 0.9
+        reference_axis = torch.where(use_x_axis, x_axis, z_axis)
+
+        normal_1 = torch.linalg.cross(tangent, reference_axis)
+        normal_1 = normal_1 / torch.linalg.norm(normal_1, dim=-1, keepdim=True).clamp_min(1.0e-4)
+        normal_2 = torch.linalg.cross(tangent, normal_1)
+        normal_2 = normal_2 / torch.linalg.norm(normal_2, dim=-1, keepdim=True).clamp_min(1.0e-4)
+
+        random_offsets = (torch.rand(len(env_ids), 2, 2, device=self.device) * 2.0) - 1.0
+        offset_scale = 0.25 * length.unsqueeze(1)
+        first_offset = offset_scale[:, 0] * (
+            random_offsets[:, 0, 0:1] * normal_1 + 0.5 * random_offsets[:, 0, 1:2] * normal_2
+        )
+        second_offset = offset_scale[:, 0] * (
+            random_offsets[:, 1, 0:1] * normal_1 + 0.5 * random_offsets[:, 1, 1:2] * normal_2
+        )
+
+        self._curve_control_points[env_ids, 0] = start_pos + 0.33 * delta + first_offset
+        self._curve_control_points[env_ids, 1] = start_pos + 0.66 * delta + second_offset
+
+    def _reset_tracked_trajectory(self, env_ids: torch.Tensor):
+        current_trajectory_point = self._get_current_trajectory_points(env_ids)
+        self.tracked_trajectory_positions[env_ids] = current_trajectory_point.unsqueeze(1)
+        self.tracked_trajectory_positions_w[env_ids] = 0.0
+        self.tracked_trajectory_orientations_w[env_ids] = 0.0
+        self.tracked_trajectory_orientations_w[env_ids, :, 0] = 1.0
+        self._tracked_trajectory_counts[env_ids] = 1
+
+    def _evaluate_curve(self, progress: torch.Tensor) -> torch.Tensor:
+        if progress.ndim == 1:
+            progress = progress.unsqueeze(-1)
+
+        is_trajectory_sampling = progress.ndim == 3
+        one_minus_t = 1.0 - progress
+        if is_trajectory_sampling:
+            start_pos = self.pose_start[:, :3].unsqueeze(1)
+            control_point_1 = self._curve_control_points[:, 0].unsqueeze(1)
+            control_point_2 = self._curve_control_points[:, 1].unsqueeze(1)
+            target_pos = self.pose_target[:, :3].unsqueeze(1)
+        else:
+            start_pos = self.pose_start[:, :3]
+            control_point_1 = self._curve_control_points[:, 0]
+            control_point_2 = self._curve_control_points[:, 1]
+            target_pos = self.pose_target[:, :3]
+
+        return (
+            (one_minus_t**3) * start_pos
+            + 3.0 * (one_minus_t**2) * progress * control_point_1
+            + 3.0 * one_minus_t * (progress**2) * control_point_2
+            + (progress**3) * target_pos
+        )
+
     def _set_debug_vis_impl(self, debug_vis: bool):
         if debug_vis:
             if not hasattr(self, "goal_pose_visualizer"):
@@ -207,6 +276,7 @@ class UniformPoseWBCCommand(CommandTerm):
 
         link0_pos_w = self.robot.data.body_pos_w[:, self.link0_idx]
         link0_quat_w = self.robot.data.body_state_w[:, self.link0_idx, 3:7]
+        self._append_current_ee_trajectory_points()
 
         self._convert_pose_to_world(self.pose_target, link0_pos_w, link0_quat_w, self.target_pose_w)
         self._convert_pose_to_world(self.pose_command, link0_pos_w, link0_quat_w, self.tracking_pose_w)
@@ -229,15 +299,9 @@ class UniformPoseWBCCommand(CommandTerm):
     def _update_trajectory_visualization(self, link0_pos_w: torch.Tensor, link0_quat_w: torch.Tensor):
         sample_t = self._trajectory_samples.view(1, -1, 1)
 
-        start_pos = self.pose_start[:, :3].unsqueeze(1)
-        target_pos = self.pose_target[:, :3].unsqueeze(1)
-        command_pos = self.pose_command[:, :3].unsqueeze(1)
-
-        interpolation_curve_local = torch.lerp(start_pos, target_pos, sample_t)
-        tracked_trajectory_local = torch.lerp(start_pos, command_pos, sample_t)
+        interpolation_curve_local = self._evaluate_curve(sample_t)
 
         target_quat = self.pose_target[:, 3:].unsqueeze(1).expand(-1, self._trajectory_num_points, -1)
-        command_quat = self.pose_command[:, 3:].unsqueeze(1).expand(-1, self._trajectory_num_points, -1)
 
         self._convert_curve_to_world(
             interpolation_curve_local,
@@ -248,13 +312,52 @@ class UniformPoseWBCCommand(CommandTerm):
             self.interpolation_curve_orientations_w,
         )
         self._convert_curve_to_world(
-            tracked_trajectory_local,
-            command_quat,
+            self.tracked_trajectory_positions,
+            self.tracked_trajectory_orientations_w,
             link0_pos_w,
             link0_quat_w,
             self.tracked_trajectory_positions_w,
             self.tracked_trajectory_orientations_w,
         )
+
+    def _append_current_ee_trajectory_points(self):
+        current_trajectory_points = self._get_current_trajectory_points()
+
+        for env_id in range(self.num_envs):
+            count = int(self._tracked_trajectory_counts[env_id].item())
+            current_pos = current_trajectory_points[env_id]
+            if count == 0:
+                self.tracked_trajectory_positions[env_id, 0] = current_pos
+                self._tracked_trajectory_counts[env_id] = 1
+                continue
+
+            last_pos = self.tracked_trajectory_positions[env_id, count - 1]
+            if torch.linalg.norm(current_pos - last_pos).item() < self._trajectory_point_spacing:
+                continue
+
+            if count < self._trajectory_num_points:
+                self.tracked_trajectory_positions[env_id, count] = current_pos
+                self.tracked_trajectory_positions[env_id, count + 1 :] = current_pos
+                self._tracked_trajectory_counts[env_id] = count + 1
+            else:
+                self.tracked_trajectory_positions[env_id, :-1] = self.tracked_trajectory_positions[env_id, 1:].clone()
+                self.tracked_trajectory_positions[env_id, -1] = current_pos
+
+    def _get_current_trajectory_points(self, env_ids: torch.Tensor | None = None) -> torch.Tensor:
+        if env_ids is None:
+            link0_pos_w = self.robot.data.body_pos_w[:, self.link0_idx]
+            link0_quat_w = self.robot.data.body_state_w[:, self.link0_idx, 3:7]
+            ee_pos_w = self.robot.data.body_pos_w[:, self.body_idx]
+        else:
+            link0_pos_w = self.robot.data.body_pos_w[env_ids, self.link0_idx]
+            link0_quat_w = self.robot.data.body_state_w[env_ids, self.link0_idx, 3:7]
+            ee_pos_w = self.robot.data.body_pos_w[env_ids, self.body_idx]
+
+        trajectory_points = torch.zeros_like(ee_pos_w)
+        ee_pos_link0 = quat_apply_inverse(link0_quat_w, ee_pos_w - link0_pos_w)
+        trajectory_points[:, :2] = ee_pos_link0[:, :2]
+        trajectory_points[:, 2] = ee_pos_w[:, 2]
+        return trajectory_points
 
     def _convert_pose_to_world(
         self,

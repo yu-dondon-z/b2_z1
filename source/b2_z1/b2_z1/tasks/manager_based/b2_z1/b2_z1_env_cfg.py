@@ -259,32 +259,32 @@ class CommandsCfg:
         rel_standing_envs=0.33,
         debug_vis=True,
         heading_command=False,
-        ranges=mdp.command_cfg.UniformVelocityCommandCfg.Ranges(
-            lin_vel_x=(-0.2, 0.2),
-            lin_vel_y=(-0.2, 0.2),
-            ang_vel_z=(-0.2, 0.2),
-            heading=(-0.0, 0.0),
-        ),
-        limit_ranges=mdp.command_cfg.UniformVelocityCommandCfg.Ranges(
-            lin_vel_x=(-0.6, 0.6),
-            lin_vel_y=(-0.6, 0.6),
-            ang_vel_z=(-1.0, 1.0),
-            heading=(-0.0, 0.0),
-        ),
-        
-        
         # ranges=mdp.command_cfg.UniformVelocityCommandCfg.Ranges(
-        #     lin_vel_x=(-0.0, 0.0),
-        #     lin_vel_y=(-0.0, 0.0),
-        #     ang_vel_z=(-0.0, 0.0),
+        #     lin_vel_x=(-0.2, 0.2),
+        #     lin_vel_y=(-0.2, 0.2),
+        #     ang_vel_z=(-0.2, 0.2),
         #     heading=(-0.0, 0.0),
         # ),
         # limit_ranges=mdp.command_cfg.UniformVelocityCommandCfg.Ranges(
-        #     lin_vel_x=(-0.0, 0.0),
-        #     lin_vel_y=(-0.0, 0.0),
-        #     ang_vel_z=(-0.0, 0.0),
+        #     lin_vel_x=(-0.6, 0.6),
+        #     lin_vel_y=(-0.6, 0.6),
+        #     ang_vel_z=(-1.0, 1.0),
         #     heading=(-0.0, 0.0),
         # ),
+        
+        
+        ranges=mdp.command_cfg.UniformVelocityCommandCfg.Ranges(
+            lin_vel_x=(-0.0, 0.0),
+            lin_vel_y=(-0.0, 0.0),
+            ang_vel_z=(-0.0, 0.0),
+            heading=(-0.0, 0.0),
+        ),
+        limit_ranges=mdp.command_cfg.UniformVelocityCommandCfg.Ranges(
+            lin_vel_x=(-0.0, 0.0),
+            lin_vel_y=(-0.0, 0.0),
+            ang_vel_z=(-0.0, 0.0),
+            heading=(-0.0, 0.0),
+        ),
     )
     
     
