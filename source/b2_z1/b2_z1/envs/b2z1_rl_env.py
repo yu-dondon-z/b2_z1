@@ -18,7 +18,7 @@ class B2Z1ManagerBasedRLEnv(ManagerBasedRLEnv):
         
         
         # self.z1_joints_index = [4, 9, 14, 15, 16, 17]  # 6 dof arm
-        # self.z1_default_joint_pos = [0.0, 0.1, -0.1, 0.0, 0.0, 0.0]
+        # self.z1_default_joint_pos = [0.0, 0.2, -0.2, -0.35, 0.0, 0.0]
         
     
     def step(self, action: torch.Tensor):
@@ -51,7 +51,7 @@ class B2Z1ManagerBasedRLEnv(ManagerBasedRLEnv):
         is_rendering = self.sim.has_gui() or self.sim.has_rtx_sensors()
         
         
-        # # z1 joint init pos
+        # z1 joint init pos
         # robot = self.scene['robot']
         # z1_joints_targets = torch.tensor(self.z1_default_joint_pos).repeat(self.cfg.scene.num_envs, 1).to(self.device)
         

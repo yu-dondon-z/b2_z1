@@ -70,11 +70,26 @@ if args_cli.distributed and version.parse(installed_version) < version.parse(RSL
         f"\n\n\t{' '.join(cmd)}\n"
     )
     exit(1)
+    
+    
+
+''' compress the target files'''
+import os
+import tarfile
+PATH = os.path.dirname(os.path.realpath(__file__))
+
+def make_tar_gz(source_dir, output_tar_gz):
+    """
+    将 source_dir 目录打包并压缩成 output_tar_gz
+    """
+    with tarfile.open(output_tar_gz, "w:gz") as tar:
+        tar.add(source_dir, arcname=os.path.basename(source_dir))
+        
+        
 
 """Rest everything follows."""
 
 import gymnasium as gym
-import os
 import torch
 from datetime import datetime
 
@@ -141,6 +156,18 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     if agent_cfg.run_name:
         log_dir += f"_{agent_cfg.run_name}"
     log_dir = os.path.join(log_root_path, log_dir)
+    
+    
+    
+    # tar source dir 
+    souce_dir = PATH + "/../../source"
+    # target dir check 
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
+    make_tar_gz(souce_dir, os.path.join(log_dir, "source.tar.gz"))
+    print("[INFO] source code is saved to ", os.path.join(log_dir, "source.tar.gz"))
+    
+    
 
     # set the IO descriptors output directory if requested
     if isinstance(env_cfg, ManagerBasedRLEnvCfg):

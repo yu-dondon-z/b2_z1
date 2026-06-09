@@ -63,6 +63,8 @@ class UnitreeUrdfFileCfg(sim_utils.UrdfFileCfg):
     )
     articulation_props = sim_utils.ArticulationRootPropertiesCfg(
         enabled_self_collisions=True,
+        # enabled_self_collisions=False,  
+        
         solver_position_iteration_count=8,
         solver_velocity_iteration_count=4,
     )
@@ -116,9 +118,9 @@ B2_Z1_GUN_CFG = UnitreeArticulationCfg(
             
             # z1
             "joint1": 0.0,
-            "joint2": 0.2, 
-            "joint3": -0.2,
-            "joint4": -0.35,
+            "joint2": 0.4, 
+            "joint3": -0.4,
+            "joint4": -0.4,
             "joint5": 0.0,
             "joint6": 0.0,
         },
@@ -148,13 +150,12 @@ B2_Z1_GUN_CFG = UnitreeArticulationCfg(
             # stiffness=60.0,
             # damping=1.0,
             
-            stiffness=90.0,
-            damping=1.5,
-            
+            stiffness=120.0,
+            damping=2.5,
             
             friction=0.01,
             # effort_limit_sim=30.0,
-            effort_limit_sim=45.0,
+            effort_limit_sim=90.0,
             velocity_limit_sim=3.1415,
             
         ),
@@ -164,13 +165,12 @@ B2_Z1_GUN_CFG = UnitreeArticulationCfg(
             # stiffness=60.0,
             # damping=1.0,
             
-            stiffness=90.0,
-            damping=1.5,
+            stiffness=120.0,
+            damping=2.5,
             
             
             friction=0.01,
             # effort_limit_sim=60.0,
-            
             effort_limit_sim=90.0,
             velocity_limit_sim=3.1415,    
         ),

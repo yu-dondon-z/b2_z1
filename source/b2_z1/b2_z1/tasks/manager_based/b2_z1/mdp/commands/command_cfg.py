@@ -20,22 +20,15 @@ from isaaclab.envs.mdp.commands import (
 from isaaclab.envs.mdp.commands import (
     UniformVelocityCommandCfg as UniformVelocityCommandBaseCfg,
 )
-from .pose_command_wbc import UniformPoseWBCCommand
-from .pose_command_b import UniformBodyPoseCommand
+from .pose_command_wbc import (
+    UniformPoseWBCCommand,
+    _build_interpolation_curve_visualizer_cfg,
+    _build_tracked_trajectory_visualizer_cfg,
+    _build_tracking_pose_visualizer_cfg,
+    _build_trajectory_visualizer_cfg,
+)
 
 # -- pose
-@configclass
-class UniformPoseCommandCfg(UniformPoseCommandBaseCfg):
-
-    class_type: type  = UniformBodyPoseCommand
-
-    ranges: UniformPoseCommandBaseCfg.Ranges = None  # type: ignore
-    """The initial range"""
-    limit_ranges: UniformPoseCommandBaseCfg.Ranges = None  # type: ignore
-    """The range limit """
-    curriculum_enabled: bool = False
-    root_name: str = "link00"
-
 @configclass
 class UniformPoseWBCCommandCfg(UniformPoseCommandBaseCfg):
 
@@ -48,6 +41,12 @@ class UniformPoseWBCCommandCfg(UniformPoseCommandBaseCfg):
     link_name: str = "link00"
     """The name of the root body, which serves as the reference frame for the command."""
     curriculum_enabled: bool = False
+    trajectory_num_points: int = 10
+    """Number of points used to visualize the interpolation curve and tracked path."""
+    tracking_pose_visualizer_cfg = _build_tracking_pose_visualizer_cfg()
+    interpolation_curve_visualizer_cfg = _build_interpolation_curve_visualizer_cfg()
+    tracked_trajectory_visualizer_cfg = _build_tracked_trajectory_visualizer_cfg()
+    trajectory_visualizer_cfg = _build_trajectory_visualizer_cfg()
 
 
 # -- velocity
