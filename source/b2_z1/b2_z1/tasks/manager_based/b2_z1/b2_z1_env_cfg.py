@@ -300,7 +300,7 @@ class CommandsCfg:
             
             pos_x=(0.4, 0.5),
             pos_y=(-0.15, 0.15),
-            pos_z=(0.2, 0.4),  # World frame
+            pos_z=(0.2, 0.2),  # World frame
             
             
             roll=(-0.0, 0.0),
@@ -314,7 +314,9 @@ class CommandsCfg:
             
             pos_x=(0.35, 0.8),
             pos_y=(-0.4, 0.4),
-            pos_z=(0.0, 0.3),  # World frame
+            # pos_z=(0.0, 0.3),  # World frame
+            pos_z=(0.0, 0.15),  # World frame
+            
             
             # roll=(-3.14 / 3, 3.14 / 3),
             # pitch=(-3.14 / 4, 3.14 / 4),  # depends on end-effector axis
@@ -322,55 +324,11 @@ class CommandsCfg:
             
             roll=(-0.0, 0.0),
             pitch=(3.14/2, 3.14/2),  # depends on end-effector axis
-            yaw=(-0.0, -0.0),
-            
+            yaw=(-0.0, -0.0),   
         ),    
     )
     
-    
-    # ee_target = mdp.command_cfg.UniformPoseWBCPlayCommandCfg(
-    #     asset_name="robot",
-    #     body_name="dummy_target",
-    #     resampling_time_range=(8.0, 10.0),
-    #     debug_vis=True,
-    #     ranges=mdp.command_cfg.UniformPoseWBCPlayCommandCfg.Ranges(
-    #         # pos_x=(0.4, 0.45),
-    #         # pos_y=(-0.05, 0.05),
-    #         # pos_z=(0.3, 0.3),  # World frame
-            
-    #         pos_x=(0.4, 0.5),
-    #         pos_y=(-0.15, 0.15),
-    #         pos_z=(0.2, 0.4),  # World frame
-            
-            
-    #         roll=(-0.0, 0.0),
-    #         pitch=(-0.0, -0.0),  # depends on end-effector axis
-    #         yaw=(-0.0, -0.0),
-    #     ),
-    #     limit_ranges=mdp.command_cfg.UniformPoseWBCPlayCommandCfg.Ranges(
-    #         # pos_x=(0.55, 0.85),
-    #         # pos_y=(-0.35, 0.35),
-    #         # pos_z=(0.1, 1.0),  # World frame
-            
-    #         pos_x=(0.35, 0.8),
-    #         pos_y=(-0.4, 0.4),
-    #         pos_z=(0.0, 0.3),  # World frame
-            
-    #         # roll=(-3.14 / 3, 3.14 / 3),
-    #         # pitch=(-3.14 / 4, 3.14 / 4),  # depends on end-effector axis
-    #         # yaw=(-3.14 / 6, 3.14 / 6),
-            
-    #         roll=(-0.0, 0.0),
-    #         pitch=(3.14/2, 3.14/2),  # depends on end-effector axis
-    #         yaw=(-0.0, -0.0),
-            
-    #     ),    
-    # )
-    
-    
 
-    
-    
 
 
 @configclass
@@ -443,14 +401,14 @@ class RewardsCfg:
     )
     
     
-    end_effector_orientation_tracking = RewTerm(
-        func=mdp.orientation_command_error,
-        weight=-1.5,
-        params={
-            "asset_cfg": SceneEntityCfg("robot", body_names="dummy_target"),
-            "command_name": "ee_target",
-        },
-    )
+    # end_effector_orientation_tracking = RewTerm(
+    #     func=mdp.orientation_command_error,
+    #     weight=-1.5,
+    #     params={
+    #         "asset_cfg": SceneEntityCfg("robot", body_names="dummy_target"),
+    #         "command_name": "ee_target",
+    #     },
+    # )
     
     
     
@@ -722,7 +680,7 @@ class B2Z1EnvCfg(ManagerBasedRLEnvCfg):
         self.rewards.end_effector_position_tracking_exp.weight = 4.5 # 3.5
         self.rewards.end_effector_position_tracking_fine_grained.weight = 2.5
         
-        self.rewards.end_effector_orientation_tracking.weight = -2.5
+        # self.rewards.end_effector_orientation_tracking.weight = -2.5
         
         self.rewards.ee_stability.weight = -0.1
         
@@ -784,6 +742,15 @@ class B2Z1PlayEnvCfg(B2Z1EnvCfg):
         self.scene.num_envs = 32
         
         self.commands.base_velocity.ranges = self.commands.base_velocity.limit_ranges
+        self.commands.base_velocity.ranges.lin_vel_x = (0.0, 0.4)
+        
+        
+        self.commands.ee_target.ranges.pos_x = (0.4, 0.5)
+        self.commands.ee_target.ranges.pos_y = (-0.4, 0.4)
+        self.commands.ee_target.ranges.pos_z = (0.0, 0.05)
+        
         # self.commands.ee_target.ranges = self.commands.ee_target.limit_ranges
+        
+        
         
         
