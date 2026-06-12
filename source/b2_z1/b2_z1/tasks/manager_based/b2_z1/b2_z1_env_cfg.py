@@ -228,50 +228,13 @@ class EventCfg:
 @configclass
 class CommandsCfg:
     """Command specifications for the MDP."""
-
-    # base_velocity = mdp.UniformLevelVelocityCommandCfg(
-    #     asset_name="robot",
-    #     resampling_time_range=(10.0, 10.0),
-    #     rel_standing_envs=0.25,
-    #     debug_vis=True,
-    #     ranges=mdp.UniformLevelVelocityCommandCfg.Ranges(
-    #         lin_vel_x=(-0.1, 0.1), lin_vel_y=(-0.1, 0.1), ang_vel_z=(-1, 1)
-    #     ),
-    #     limit_ranges=mdp.UniformLevelVelocityCommandCfg.Ranges(
-    #         lin_vel_x=(-0.1, 0.6), lin_vel_y=(-0.4, 0.4), ang_vel_z=(-1.0, 1.0)
-    #     ),
-    # )
-    
-    # ee_target = mdp.UniformPoseCommandCfg(
-    #     asset_name="robot",
-    #     resampling_time_range=(2.0, 4.0),
-    #     body_name="dummy_target",
-    #     debug_vis=True,
-    #     ranges=mdp.UniformPoseCommandCfg.Ranges(
-    #         pos_x=(0.6, 0.75), pos_y=(-0.4, 0.4), pos_z=(-0.4, -0.1), 
-    #         roll=(-0, 0), pitch=(0.7854, 1.5708), yaw=(-0, 0)
-    #     ),
-    # )
     
     base_velocity = mdp.command_cfg.UniformVelocityCommandCfg(
         asset_name="robot",
         resampling_time_range=(10.0, 10.0),
         rel_standing_envs=0.33,
         debug_vis=True,
-        heading_command=False,
-        # ranges=mdp.command_cfg.UniformVelocityCommandCfg.Ranges(
-        #     lin_vel_x=(-0.2, 0.2),
-        #     lin_vel_y=(-0.2, 0.2),
-        #     ang_vel_z=(-0.2, 0.2),
-        #     heading=(-0.0, 0.0),
-        # ),
-        # limit_ranges=mdp.command_cfg.UniformVelocityCommandCfg.Ranges(
-        #     lin_vel_x=(-0.6, 0.6),
-        #     lin_vel_y=(-0.6, 0.6),
-        #     ang_vel_z=(-1.0, 1.0),
-        #     heading=(-0.0, 0.0),
-        # ),
-        
+        heading_command=False, 
         
         ranges=mdp.command_cfg.UniformVelocityCommandCfg.Ranges(
             lin_vel_x=(-0.0, 0.0),
@@ -280,9 +243,9 @@ class CommandsCfg:
             heading=(-0.0, 0.0),
         ),
         limit_ranges=mdp.command_cfg.UniformVelocityCommandCfg.Ranges(
-            lin_vel_x=(-0.0, 0.0),
-            lin_vel_y=(-0.0, 0.0),
-            ang_vel_z=(-0.0, 0.0),
+            lin_vel_x=(-0.6, 0.6),
+            lin_vel_y=(-0.6, 0.6),
+            ang_vel_z=(-0.6, 0.6),
             heading=(-0.0, 0.0),
         ),
     )
@@ -300,11 +263,11 @@ class CommandsCfg:
             
             pos_x=(0.4, 0.5),
             pos_y=(-0.15, 0.15),
-            pos_z=(0.2, 0.2),  # World frame
+            pos_z=(0.2, 0.4),  # World frame
             
             
             roll=(-0.0, 0.0),
-            pitch=(-0.0, -0.0),  # depends on end-effector axis
+            pitch=(3.14/2, 3.14/2),  # depends on end-effector axis
             yaw=(-0.0, -0.0),
         ),
         limit_ranges=mdp.command_cfg.UniformPoseWBCCommandCfg.Ranges(
@@ -312,10 +275,10 @@ class CommandsCfg:
             # pos_y=(-0.35, 0.35),
             # pos_z=(0.1, 1.0),  # World frame
             
-            pos_x=(0.35, 0.8),
-            pos_y=(-0.4, 0.4),
+            pos_x=(0.35, 0.7),
+            pos_y=(-0.6, 0.6),
             # pos_z=(0.0, 0.3),  # World frame
-            pos_z=(0.0, 0.15),  # World frame
+            pos_z=(0.0, 0.4),  # World frame
             
             
             # roll=(-3.14 / 3, 3.14 / 3),
@@ -348,25 +311,7 @@ class RewardsCfg:
     )
     
     
-    ######### ori 
-    # end_effector_position_tracking = RewTerm(
-    #     func=mdp.position_command_error,
-    #     weight=-0.2,
-    #     params={"asset_cfg": SceneEntityCfg("robot", body_names="dummy_target"), "command_name": "ee_target"},
-    # )
     
-    # end_effector_position_tracking_fine_grained = RewTerm(
-    #     func=mdp.position_command_error_tanh,
-    #     weight=0.1,
-    #     params={"asset_cfg": SceneEntityCfg("robot", body_names="dummy_target"), "std": 0.1, "command_name": "ee_target"},
-    # )
-    # end_effector_orientation_tracking = RewTerm(
-    #     func=mdp.orientation_command_error,
-    #     weight=-0.1,
-    #     params={"asset_cfg": SceneEntityCfg("robot", body_names="dummy_target"), "command_name": "ee_target"},
-    # )
-    
-    ########## legged_manip
     end_effector_position_tracking_exp = RewTerm(
         func=mdp.position_command_error_exp,
         weight=3.0,
@@ -378,18 +323,6 @@ class RewardsCfg:
     )
     
     
-    ##### 
-    
-    # end_effector_position_tracking = RewTerm(
-    #     func=mdp.position_command_error_l2,
-    #     weight=-2.0,
-    #     params={
-    #         "asset_cfg": SceneEntityCfg("robot", body_names="dummy_target"),
-    #         "command_name": "ee_target",
-    #         "std": math.sqrt(0.1),
-    #     },
-    # )
-    
     end_effector_position_tracking_fine_grained = RewTerm(
         func=mdp.position_command_error_tanh,
         weight=3.0,
@@ -399,19 +332,6 @@ class RewardsCfg:
             "command_name": "ee_target",
         },
     )
-    
-    
-    # end_effector_orientation_tracking = RewTerm(
-    #     func=mdp.orientation_command_error,
-    #     weight=-1.5,
-    #     params={
-    #         "asset_cfg": SceneEntityCfg("robot", body_names="dummy_target"),
-    #         "command_name": "ee_target",
-    #     },
-    # )
-    
-    
-    
     
     
     
@@ -479,15 +399,15 @@ class RewardsCfg:
     
     
     
-    arm_deviation = RewTerm(
-        func=mdp.joint_deviation_l1,
-        weight=-0.1,
-        params={
-            "asset_cfg": SceneEntityCfg(
-                "robot", joint_names=[ "joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
-            ),
-        },
-    )
+    # arm_deviation = RewTerm(
+    #     func=mdp.joint_deviation_l1,
+    #     weight=-0.1,
+    #     params={
+    #         "asset_cfg": SceneEntityCfg(
+    #             "robot", joint_names=[ "joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
+    #         ),
+    #     },
+    # )
     
     joint_mirror = RewTerm(
         func=mdp.joint_mirror,
@@ -520,11 +440,11 @@ class RewardsCfg:
         },
     )
     
-    # air_time_variance = RewTerm(
-    #     func=mdp.air_time_variance_penalty,
-    #     weight=-1.0,
-    #     params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot")},
-    # )
+    air_time_variance = RewTerm(
+        func=mdp.air_time_variance_penalty,
+        weight=-1.0,
+        params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot")},
+    )
     
     feet_height = RewTerm(
         func=mdp.swing_leg_height_reward,
@@ -672,65 +592,62 @@ class B2Z1EnvCfg(ManagerBasedRLEnvCfg):
         # we tick all the sensors based on the smallest update period (physics update period)
         self.scene.contact_forces.update_period = self.sim.dt
         
-        # reward settings
         
+        
+        ######### Reward Settings #########
+          
+        # -- task rewards
         self.rewards.track_lin_vel_xy.weight = 4.0
-        self.rewards.track_ang_vel_z.weight = 2.5
+        self.rewards.track_ang_vel_z.weight = 3.5 #2.5
         
-        self.rewards.end_effector_position_tracking_exp.weight = 4.5 # 3.5
-        self.rewards.end_effector_position_tracking_fine_grained.weight = 2.5
-        
-        # self.rewards.end_effector_orientation_tracking.weight = -2.5
+        self.rewards.end_effector_position_tracking_exp.weight = 4.5 
+        self.rewards.end_effector_position_tracking_fine_grained.weight = 2.75
         
         self.rewards.ee_stability.weight = -0.1
         
-        # self.rewards.end_effector_position_tracking_fine_grained = None
         
-        
-        self.rewards.hip_deviation.weight = -0.1
-        self.rewards.joint_deviation.weight = -0.005
-        self.rewards.arm_deviation.weight = -0.1
-        
-        # self.rewards.base_height_exp.params["target_height"] = 0.48
-        # self.rewards.base_height_exp.weight = 0.35
+        # -- base rewards
         
         self.rewards.base_height_l2.params["target_height"] = 0.48
         self.rewards.base_height_l2.weight = -15.0  # -30.0
         self.rewards.flat_orientation_l2.weight = -3.0 # -5.0
         
         self.rewards.base_linear_velocity.weight = -2.5
-        self.rewards.base_angular_velocity.weight = -0.1 #-0.1
+        self.rewards.base_angular_velocity.weight = -0.15 #-0.1
         
         
-        # self.rewards.feet_air_time.weight = 0.5
+        # -- joint rewards
+        
+        self.rewards.hip_deviation.weight = -0.2
+        self.rewards.joint_deviation.weight = -0.01# -0.005
+        # self.rewards.arm_deviation.weight = -0.1
+        
+        
+        
+        # -- feet rewards
         self.rewards.feet_long_air.params["max_air_time"] = 0.6
         self.rewards.feet_long_air.weight = -1.5
         
+        self.rewards.air_time_variance.weight = -1.0
         self.rewards.feet_height.params["target_height"] = 0.15
         self.rewards.feet_height.weight = 0.15
         
-        # self.rewards.air_time_variance.weight = -1.0
-        
-        # self.rewards.feet_clearance.params["target_height"] = 0.2
-        # self.rewards.feet_clearance.weight = 0.2
-        
-        
-        self.rewards.feet_slide.weight = -0.5
+        self.rewards.feet_slide.weight = -1.0
         self.rewards.feet_gait.params["synced_feet_pair_names"] = (("FL_foot", "RR_foot"), ("FR_foot", "RL_foot"))
-        self.rewards.feet_gait.weight = 0.75
+        self.rewards.feet_gait.weight = 1.0
         
         
         
+        # -- misc rewards
         self.rewards.joint_power.weight = -2.5e-5
         self.rewards.dof_torques_l2.weight = -1.25e-5
-        # self.rewards.calf_torques_max.weight = -5e-5
         
-        self.rewards.joint_mirror.weight = -0.3 # -0.25
+    
         
+        ######### Command Settings #########
         
         self.commands.base_velocity.curriculum_enabled = True
-        # self.commands.ee_target.curriculum_enabled = True
-        self.commands.ee_target.curriculum_enabled = False
+        self.commands.ee_target.curriculum_enabled = True
         
         
         
