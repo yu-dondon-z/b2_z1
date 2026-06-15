@@ -39,23 +39,19 @@ def end_effector_relative_pose(
     asset: Articulation = env.scene[asset_cfg.name]
 
     ee_ids, _ = asset.find_bodies("dummy_target")
-    link0_ids, _ = asset.find_bodies("link00")
+    base_ids, _ = asset.find_bodies("base_link")
 
-    if len(ee_ids) == 0 or len(link0_ids) == 0:
+    if len(ee_ids) == 0 or len(base_ids) == 0:
         return torch.zeros((env.num_envs, 7), device=env.device)
 
-    ee_pos_w    = asset.data.body_pos_w[:, ee_ids[0], :]
-    link0_pos_w = asset.data.body_pos_w[:, link0_ids[0], :]
-    link0_quat_w = asset.data.body_quat_w[:, link0_ids[0], :]
-    ee_quat_w    = asset.data.body_quat_w[:, ee_ids[0], :]
+    ee_pos_w = asset.data.body_pos_w[:, ee_ids[0], :]
+    base_pos_w = asset.data.body_pos_w[:, base_ids[0], :]
+    base_quat_w = asset.data.body_quat_w[:, base_ids[0], :]
+    ee_quat_w = asset.data.body_quat_w[:, ee_ids[0], :]
 
-    # Relative position: transform to link0 frame (not root frame)
-    rel_pos_w = ee_pos_w - link0_pos_w
-    rel_pos   = quat_apply_inverse(link0_quat_w, rel_pos_w)  # fixed
+    rel_pos = quat_apply_inverse(base_quat_w, ee_pos_w - base_pos_w)
 
-    # Relative orientation: q_rel = q_link0^{-1} * q_ee
-    link0_quat_conj = quat_conjugate(link0_quat_w)           # fixed
-    rel_quat = quat_mul(link0_quat_conj, ee_quat_w)
+    rel_quat = quat_mul(quat_conjugate(base_quat_w), ee_quat_w)
 
     return torch.cat([rel_pos, rel_quat], dim=-1)
 

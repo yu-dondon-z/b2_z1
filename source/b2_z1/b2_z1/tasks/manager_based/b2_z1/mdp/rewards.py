@@ -412,27 +412,21 @@ def position_command_error_l2(
     command_name: str,
     std: float,
     asset_cfg: SceneEntityCfg,
-    link0_name: str = "link00",
+    base_name: str = "base_link",
 ) -> torch.Tensor:
 
     asset: RigidObject = env.scene[asset_cfg.name]
     ee_id = asset_cfg.body_ids[0]
-    link0_id, _ = asset.find_bodies(link0_name)
-    link0_id = link0_id[0]
+    base_id, _ = asset.find_bodies(base_name)
+    base_id = base_id[0]
     command = env.command_manager.get_command(command_name)
 
     ee_pos_w = asset.data.body_pos_w[:, ee_id]
-    link0_pos_w = asset.data.body_pos_w[:, link0_id]
-    link0_quat_w = asset.data.body_quat_w[:, link0_id]
+    base_pos_w = asset.data.body_pos_w[:, base_id]
+    base_quat_w = asset.data.body_quat_w[:, base_id]
 
-    # XY error in link0 frame
-    end_effector_curr_pos_link0 = quat_apply_inverse(
-        link0_quat_w, ee_pos_w - link0_pos_w
-    )
-    pos_error_xy = end_effector_curr_pos_link0[:, :2] - command[:, :2]
-    # Z error in world frame
-    pos_error_z = (ee_pos_w[:, 2] - command[:, 2]).unsqueeze(1)
-    pos_error = torch.cat([pos_error_xy, pos_error_z], dim=-1)
+    ee_pos_base = quat_apply_inverse(base_quat_w, ee_pos_w - base_pos_w)
+    pos_error = ee_pos_base - command[:, :3]
     
     return torch.norm(pos_error, dim=1)
     
@@ -442,31 +436,21 @@ def position_command_error_exp(
     command_name: str,
     std: float,
     asset_cfg: SceneEntityCfg,
-    link0_name: str = "link00",
+    base_name: str = "base_link",
 ) -> torch.Tensor:
-    """Reward end-effector position tracking in a mixed coordinate frame.
-
-    XY error is computed in the link0 frame, Z error is computed in the world frame.
-    This is used for WBC (Whole-Body Control) where z commands are absolute heights.
-    """
+    """Reward end-effector position tracking in the base_link frame."""
     asset: RigidObject = env.scene[asset_cfg.name]
     ee_id = asset_cfg.body_ids[0]
-    link0_id, _ = asset.find_bodies(link0_name)
-    link0_id = link0_id[0]
+    base_id, _ = asset.find_bodies(base_name)
+    base_id = base_id[0]
     command = env.command_manager.get_command(command_name)
 
     ee_pos_w = asset.data.body_pos_w[:, ee_id]
-    link0_pos_w = asset.data.body_pos_w[:, link0_id]
-    link0_quat_w = asset.data.body_quat_w[:, link0_id]
+    base_pos_w = asset.data.body_pos_w[:, base_id]
+    base_quat_w = asset.data.body_quat_w[:, base_id]
 
-    # XY error in link0 frame
-    end_effector_curr_pos_link0 = quat_apply_inverse(
-        link0_quat_w, ee_pos_w - link0_pos_w
-    )
-    pos_error_xy = end_effector_curr_pos_link0[:, :2] - command[:, :2]
-    # Z error in world frame
-    pos_error_z = (ee_pos_w[:, 2] - command[:, 2]).unsqueeze(1)
-    pos_error = torch.cat([pos_error_xy, pos_error_z], dim=-1)
+    ee_pos_base = quat_apply_inverse(base_quat_w, ee_pos_w - base_pos_w)
+    pos_error = ee_pos_base - command[:, :3]
 
     error_sq = torch.sum(torch.square(pos_error), dim=1)
     return torch.exp(-error_sq / (std**2))
@@ -478,27 +462,21 @@ def position_command_error_tanh(
     command_name: str,
     std: float,
     asset_cfg: SceneEntityCfg,
-    link0_name: str = "link00",
+    base_name: str = "base_link",
 ) -> torch.Tensor:
 
     asset: RigidObject = env.scene[asset_cfg.name]
     ee_id = asset_cfg.body_ids[0]
-    link0_id, _ = asset.find_bodies(link0_name)
-    link0_id = link0_id[0]
+    base_id, _ = asset.find_bodies(base_name)
+    base_id = base_id[0]
     command = env.command_manager.get_command(command_name)
 
     ee_pos_w = asset.data.body_pos_w[:, ee_id]
-    link0_pos_w = asset.data.body_pos_w[:, link0_id]
-    link0_quat_w = asset.data.body_quat_w[:, link0_id]
+    base_pos_w = asset.data.body_pos_w[:, base_id]
+    base_quat_w = asset.data.body_quat_w[:, base_id]
 
-    # XY error in link0 frame
-    end_effector_curr_pos_link0 = quat_apply_inverse(
-        link0_quat_w, ee_pos_w - link0_pos_w
-    )
-    pos_error_xy = end_effector_curr_pos_link0[:, :2] - command[:, :2]
-    # Z error in world frame
-    pos_error_z = (ee_pos_w[:, 2] - command[:, 2]).unsqueeze(1)
-    pos_error = torch.cat([pos_error_xy, pos_error_z], dim=-1)
+    ee_pos_base = quat_apply_inverse(base_quat_w, ee_pos_w - base_pos_w)
+    pos_error = ee_pos_base - command[:, :3]
 
     distance = torch.norm(pos_error, dim=1)
     return 1 - torch.tanh(distance / std)

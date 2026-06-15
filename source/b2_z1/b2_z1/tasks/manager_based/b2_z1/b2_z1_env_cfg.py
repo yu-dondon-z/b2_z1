@@ -242,10 +242,17 @@ class CommandsCfg:
             ang_vel_z=(-0.0, 0.0),
             heading=(-0.0, 0.0),
         ),
+        # limit_ranges=mdp.command_cfg.UniformVelocityCommandCfg.Ranges(
+        #     lin_vel_x=(-0.6, 0.6),
+        #     lin_vel_y=(-0.6, 0.6),
+        #     ang_vel_z=(-0.6, 0.6),
+        #     heading=(-0.0, 0.0),
+        # ),
+        
         limit_ranges=mdp.command_cfg.UniformVelocityCommandCfg.Ranges(
-            lin_vel_x=(-0.6, 0.6),
-            lin_vel_y=(-0.6, 0.6),
-            ang_vel_z=(-0.6, 0.6),
+            lin_vel_x=(-0.0, 0.0),
+            lin_vel_y=(-0.0, 0.0),
+            ang_vel_z=(-0.0, 0.0),
             heading=(-0.0, 0.0),
         ),
     )
@@ -663,11 +670,18 @@ class B2Z1PlayEnvCfg(B2Z1EnvCfg):
         self.commands.base_velocity.ranges.lin_vel_x = (0.0, 0.4)
         
         
-        self.commands.ee_target.ranges.pos_x = (0.4, 0.5)
-        self.commands.ee_target.ranges.pos_y = (-0.4, 0.4)
-        self.commands.ee_target.ranges.pos_z = (0.0, 0.05)
+        # self.commands.ee_target.ranges.pos_x = (0.4, 0.5)
+        # self.commands.ee_target.ranges.pos_y = (-0.4, 0.4)
         
-        # self.commands.ee_target.ranges = self.commands.ee_target.limit_ranges
+        self.commands.ee_target.limit_ranges.pos_x = (-0.4, 0.4)
+        self.commands.ee_target.limit_ranges.pos_y = (0.4, 0.5)
+        self.commands.ee_target.limit_ranges.pos_z = (0.0, 0.0)
+        
+        self.commands.ee_target.limit_ranges.roll = (-0.0, 0.0)
+        self.commands.ee_target.limit_ranges.pitch = (3.14/2, 3.14/2)
+        self.commands.ee_target.limit_ranges.yaw = (3.14/2, 3.14/2)
+        
+        self.commands.ee_target.ranges = self.commands.ee_target.limit_ranges
         
         
         
