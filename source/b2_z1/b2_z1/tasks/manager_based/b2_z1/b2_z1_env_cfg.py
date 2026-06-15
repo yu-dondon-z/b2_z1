@@ -340,7 +340,8 @@ class RewardsCfg:
         weight=-1.0,
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names="dummy_target"),
-            "link_name": "link06",
+            # "link_name": "link06",
+            "link_name": "link_gun",
         },
     )
 
@@ -597,13 +598,13 @@ class B2Z1EnvCfg(ManagerBasedRLEnvCfg):
         ######### Reward Settings #########
           
         # -- task rewards
-        self.rewards.track_lin_vel_xy.weight = 4.0
-        self.rewards.track_ang_vel_z.weight = 3.5 #2.5
+        self.rewards.track_lin_vel_xy.weight = 3.5 #4.0
+        self.rewards.track_ang_vel_z.weight = 3.5 #3.5
         
         self.rewards.end_effector_position_tracking_exp.weight = 4.5 
         self.rewards.end_effector_position_tracking_fine_grained.weight = 2.75
         
-        self.rewards.ee_stability.weight = -0.1
+        self.rewards.ee_stability.weight = -0.2 # -0.1
         
         
         # -- base rewards
@@ -613,13 +614,13 @@ class B2Z1EnvCfg(ManagerBasedRLEnvCfg):
         self.rewards.flat_orientation_l2.weight = -3.0 # -5.0
         
         self.rewards.base_linear_velocity.weight = -2.5
-        self.rewards.base_angular_velocity.weight = -0.15 #-0.1
+        self.rewards.base_angular_velocity.weight = -0.25 #-0.15
         
         
         # -- joint rewards
         
-        self.rewards.hip_deviation.weight = -0.2
-        self.rewards.joint_deviation.weight = -0.01# -0.005
+        self.rewards.hip_deviation.weight = -0.4 # -0.2
+        self.rewards.joint_deviation.weight = -0.04 # -0.01
         # self.rewards.arm_deviation.weight = -0.1
         
         
