@@ -40,6 +40,8 @@ class UniformPoseWBCCommandCfg(UniformPoseCommandBaseCfg):
     """The range limit """
     link_name: str = "link00"
     """The name of the root body, which serves as the reference frame for the command."""
+    base_name: str = "base_link"
+    """The name of the robot base body used as the output command frame."""
     curriculum_enabled: bool = False
     trajectory_num_points: int = 10
     """Number of points used to visualize the interpolation curve and tracked path."""

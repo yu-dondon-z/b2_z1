@@ -157,7 +157,7 @@ def lin_vel_cmd_levels(
 def pos_cmd_levels(
     env,
     env_ids: Sequence[int],
-    reward_term_name: str = "end_effector_position_tracking_exp",
+    reward_term_name: str = "end_effector_position_tracking",
 ) -> torch.Tensor:
     cfg = env.command_manager.get_term("ee_target").cfg
 
@@ -186,7 +186,7 @@ def pos_cmd_levels(
     # --- Performance: only compute at episode end ---
     if (
         env.common_step_counter > 0
-        and env.common_step_counter % (env.max_episode_length) == 0
+        and env.common_step_counter % (env.max_episode_length * 0.2) == 0
     ):
         reward_sums = env.reward_manager._episode_sums.get(reward_term_name)
         if reward_sums is not None:

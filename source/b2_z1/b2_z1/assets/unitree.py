@@ -110,8 +110,11 @@ B2_Z1_GUN_CFG = UnitreeArticulationCfg(
     init_state=ArticulationCfg.InitialStateCfg(
         pos=(0.0, 0.0, 0.7),
         joint_pos={
-            ".*R_hip_joint": -0.1,
-            ".*L_hip_joint": 0.1,
+            # ".*R_hip_joint": -0.1,
+            # ".*L_hip_joint": 0.1,
+            ".*R_hip_joint": -0.2,
+            ".*L_hip_joint": 0.2,
+            
             "F[L,R]_thigh_joint": 0.8,
             "R[L,R]_thigh_joint": 1.0,
             ".*_calf_joint": -1.5,

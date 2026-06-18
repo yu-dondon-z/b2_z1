@@ -282,6 +282,7 @@ def feet_long_air_penalty(
     env: ManagerBasedRLEnv,
     sensor_cfg: SceneEntityCfg,
     max_air_time: float = 0.5,
+    velocity_threshold: float = 0.1,
 ) -> torch.Tensor:
     """Penalize feet that stay airborne longer than max_air_time."""
     contact_sensor = env.scene.sensors[sensor_cfg.name]
@@ -289,7 +290,14 @@ def feet_long_air_penalty(
         return torch.zeros(env.num_envs, device=env.device)
     current_air = contact_sensor.data.current_air_time[:, sensor_cfg.body_ids]
     excess = torch.clamp(current_air - max_air_time, min=0.0)
-    return torch.sum(torch.square(excess), dim=1)
+    # return torch.sum(torch.square(excess), dim=1)
+    
+    cmd = torch.linalg.norm(env.command_manager.get_command("base_velocity"), dim=1)
+    is_still = cmd <= velocity_threshold
+    
+    reward = torch.sum(torch.square(excess), dim=1)
+    
+    return torch.where(is_still, torch.zeros_like(reward), reward)
 
 
 class GaitReward(ManagerTermBase):
@@ -425,8 +433,8 @@ def position_command_error_l2(
     base_pos_w = asset.data.body_pos_w[:, base_id]
     base_quat_w = asset.data.body_quat_w[:, base_id]
 
-    ee_pos_base = quat_apply_inverse(base_quat_w, ee_pos_w - base_pos_w)
-    pos_error = ee_pos_base - command[:, :3]
+    end_effector_curr_pos_base = quat_apply_inverse(base_quat_w, ee_pos_w - base_pos_w)
+    pos_error = end_effector_curr_pos_base - command[:, :3]
     
     return torch.norm(pos_error, dim=1)
     
@@ -438,7 +446,7 @@ def position_command_error_exp(
     asset_cfg: SceneEntityCfg,
     base_name: str = "base_link",
 ) -> torch.Tensor:
-    """Reward end-effector position tracking in the base_link frame."""
+    """Reward end-effector position tracking in the base frame."""
     asset: RigidObject = env.scene[asset_cfg.name]
     ee_id = asset_cfg.body_ids[0]
     base_id, _ = asset.find_bodies(base_name)
@@ -449,8 +457,8 @@ def position_command_error_exp(
     base_pos_w = asset.data.body_pos_w[:, base_id]
     base_quat_w = asset.data.body_quat_w[:, base_id]
 
-    ee_pos_base = quat_apply_inverse(base_quat_w, ee_pos_w - base_pos_w)
-    pos_error = ee_pos_base - command[:, :3]
+    end_effector_curr_pos_base = quat_apply_inverse(base_quat_w, ee_pos_w - base_pos_w)
+    pos_error = end_effector_curr_pos_base - command[:, :3]
 
     error_sq = torch.sum(torch.square(pos_error), dim=1)
     return torch.exp(-error_sq / (std**2))
@@ -475,8 +483,8 @@ def position_command_error_tanh(
     base_pos_w = asset.data.body_pos_w[:, base_id]
     base_quat_w = asset.data.body_quat_w[:, base_id]
 
-    ee_pos_base = quat_apply_inverse(base_quat_w, ee_pos_w - base_pos_w)
-    pos_error = ee_pos_base - command[:, :3]
+    end_effector_curr_pos_base = quat_apply_inverse(base_quat_w, ee_pos_w - base_pos_w)
+    pos_error = end_effector_curr_pos_base - command[:, :3]
 
     distance = torch.norm(pos_error, dim=1)
     return 1 - torch.tanh(distance / std)
@@ -538,6 +546,7 @@ def swing_leg_height_reward(
     sensor_cfg: SceneEntityCfg,
     asset_cfg: SceneEntityCfg,
     target_height: float = 0.15,
+    velocity_threshold: float = 0.1,
     std: float = 0.1,
 ) -> torch.Tensor:
     """Reward feet clearance during swing phase - encourages lifting legs when moving.
@@ -584,7 +593,14 @@ def swing_leg_height_reward(
     num_feet = swing_phase_mask.shape[1]
     if num_feet > 0:
         reward = reward / num_feet
+        
+    # return reward 
+        
+    # except from the reward when the robot is standing still 
+    cmd = torch.linalg.norm(env.command_manager.get_command("base_velocity"), dim=1)
+    is_still = cmd <= velocity_threshold
+ 
+    return torch.where(is_still, torch.zeros_like(reward), reward)
     
-    return reward
 
 
