@@ -232,7 +232,7 @@ class CommandsCfg:
     base_velocity = mdp.command_cfg.UniformVelocityCommandCfg(
         asset_name="robot",
         resampling_time_range=(10.0, 10.0),
-        rel_standing_envs=0.4,
+        rel_standing_envs=0.33,
         debug_vis=True,
         heading_command=False,
         ranges=mdp.command_cfg.UniformVelocityCommandCfg.Ranges(
@@ -242,8 +242,8 @@ class CommandsCfg:
             heading=(-0.0, 0.0),
         ),
         limit_ranges=mdp.command_cfg.UniformVelocityCommandCfg.Ranges(
-            lin_vel_x=(-0.6, 0.6),
-            lin_vel_y=(-0.6, 0.6),
+            lin_vel_x=(-1.0, 1.0),
+            lin_vel_y=(-1.0, 1.0),
             ang_vel_z=(-1.0, 1.0),
             heading=(-0.0, 0.0),
         ),
@@ -258,7 +258,7 @@ class CommandsCfg:
         ranges=mdp.command_cfg.UniformPoseWBCCommandCfg.Ranges(     
             pos_x=(0.4, 0.5),
             pos_y=(-0.15, 0.15),
-            pos_z=(0.2, 0.4),  # World frame
+            pos_z=(0.15, 0.15),  # World frame
             
             
             roll=(-0.0, 0.0),
@@ -266,9 +266,9 @@ class CommandsCfg:
             yaw=(-0.0, -0.0),
         ),
         limit_ranges=mdp.command_cfg.UniformPoseWBCCommandCfg.Ranges(
-            pos_x=(0.35, 0.8),
+            pos_x=(0.35, 0.55),
             pos_y=(-0.5, 0.5),
-            pos_z=(0.0, 0.6),  # World frame
+            pos_z=(0.0, 0.2),  # World frame
             
             roll=(-0.0, 0.0),
             pitch=(3.14/2, 3.14/2),  # depends on end-effector axis
@@ -296,41 +296,13 @@ class RewardsCfg:
     )
     
     
-    ######### ori 
-    # end_effector_position_tracking = RewTerm(
-    #     func=mdp.position_command_error,
-    #     weight=-0.2,
-    #     params={"asset_cfg": SceneEntityCfg("robot", body_names="dummy_target"), "command_name": "ee_target"},
-    # )
-    
-    # end_effector_position_tracking_fine_grained = RewTerm(
-    #     func=mdp.position_command_error_tanh,
-    #     weight=0.1,
-    #     params={"asset_cfg": SceneEntityCfg("robot", body_names="dummy_target"), "std": 0.1, "command_name": "ee_target"},
-    # )
-    # end_effector_orientation_tracking = RewTerm(
-    #     func=mdp.orientation_command_error,
-    #     weight=-0.1,
-    #     params={"asset_cfg": SceneEntityCfg("robot", body_names="dummy_target"), "command_name": "ee_target"},
-    # )
+
     
     ########## legged_manip
-    end_effector_position_tracking_exp = RewTerm(
-        func=mdp.position_command_error_exp,
-        weight=3.0,
-        params={
-            "asset_cfg": SceneEntityCfg("robot", body_names="dummy_target"),
-            "command_name": "ee_target",
-            "std": math.sqrt(0.1),
-        },
-    )
     
-    
-    ##### 
-    
-    # end_effector_position_tracking = RewTerm(
-    #     func=mdp.position_command_error_l2,
-    #     weight=-2.0,
+    # end_effector_position_tracking_exp = RewTerm(
+    #     func=mdp.position_command_error_exp,
+    #     weight=3.0,
     #     params={
     #         "asset_cfg": SceneEntityCfg("robot", body_names="dummy_target"),
     #         "command_name": "ee_target",
@@ -338,15 +310,16 @@ class RewardsCfg:
     #     },
     # )
     
-    end_effector_position_tracking_fine_grained = RewTerm(
-        func=mdp.position_command_error_tanh,
-        weight=3.0,
-        params={
-            "asset_cfg": SceneEntityCfg("robot", body_names="dummy_target"),
-            "std": 0.1,
-            "command_name": "ee_target",
-        },
-    )
+    
+    # end_effector_position_tracking_fine_grained = RewTerm(
+    #     func=mdp.position_command_error_tanh,
+    #     weight=3.0,
+    #     params={
+    #         "asset_cfg": SceneEntityCfg("robot", body_names="dummy_target"),
+    #         "std": 0.1,
+    #         "command_name": "ee_target",
+    #     },
+    # )
     
     
     # end_effector_orientation_tracking = RewTerm(
@@ -428,15 +401,15 @@ class RewardsCfg:
     
     
     
-    # arm_deviation = RewTerm(
-    #     func=mdp.joint_deviation_l1,
-    #     weight=-0.1,
-    #     params={
-    #         "asset_cfg": SceneEntityCfg(
-    #             "robot", joint_names=[ "joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
-    #         ),
-    #     },
-    # )
+    arm_deviation = RewTerm(
+        func=mdp.joint_deviation_l1,
+        weight=-0.1,
+        params={
+            "asset_cfg": SceneEntityCfg(
+                "robot", joint_names=[ "joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
+            ),
+        },
+    )
     
     joint_mirror = RewTerm(
         func=mdp.joint_mirror,
@@ -572,7 +545,7 @@ class CurriculumCfg:
     
     lin_vel_cmd_levels = CurrTerm(func=mdp.lin_vel_cmd_levels)  # type: ignore
     ang_vel_cmd_levels = CurrTerm(func=mdp.ang_vel_cmd_levels)  # type: ignore
-    pos_cmd_levels = CurrTerm(func=mdp.pos_cmd_levels)  # type: ignore
+    # pos_cmd_levels = CurrTerm(func=mdp.pos_cmd_levels)  # type: ignore
     
 
 ##
@@ -626,8 +599,8 @@ class B2Z1EnvCfg(ManagerBasedRLEnvCfg):
         self.rewards.track_lin_vel_xy.weight = 4.5
         self.rewards.track_ang_vel_z.weight = 2.5
         
-        self.rewards.end_effector_position_tracking_exp.weight = 4.0 # 3.5
-        self.rewards.end_effector_position_tracking_fine_grained.weight = 3.5
+        # self.rewards.end_effector_position_tracking_exp.weight = 4.0 # 3.5
+        # self.rewards.end_effector_position_tracking_fine_grained.weight = 3.5
         
         self.rewards.ee_stability.weight = -0.2 
         
@@ -644,9 +617,9 @@ class B2Z1EnvCfg(ManagerBasedRLEnvCfg):
         
         
         # -- joint rewards
-        self.rewards.hip_deviation.weight = -0.1
-        self.rewards.joint_deviation.weight = -0.005
-        # self.rewards.arm_deviation.weight = -0.1
+        self.rewards.hip_deviation.weight = -0.4
+        self.rewards.joint_deviation.weight = -0.01
+        self.rewards.arm_deviation.weight = -2.0
         
         self.rewards.joint_mirror.weight = -0.35 # -0.25
         
@@ -672,8 +645,8 @@ class B2Z1EnvCfg(ManagerBasedRLEnvCfg):
         
         
         self.commands.base_velocity.curriculum_enabled = True
-        # self.commands.ee_target.curriculum_enabled = True
-        self.commands.ee_target.curriculum_enabled = False
+        self.commands.ee_target.curriculum_enabled = True
+        # self.commands.ee_target.curriculum_enabled = False
         
         
         
@@ -690,8 +663,8 @@ class B2Z1PlayEnvCfg(B2Z1EnvCfg):
         self.commands.base_velocity.ranges = self.commands.base_velocity.limit_ranges
         
         
-        self.commands.ee_target.limit_ranges.pos_x = (0.5, 0.5)
-        self.commands.ee_target.limit_ranges.pos_y = (-0.6, -0.6)
+        self.commands.ee_target.limit_ranges.pos_x = (-0.0, 0.5)
+        self.commands.ee_target.limit_ranges.pos_y = (-0.0, 0.6)
         self.commands.ee_target.limit_ranges.pos_z = (0.0, 0.0)
         self.commands.ee_target.ranges = self.commands.ee_target.limit_ranges
         

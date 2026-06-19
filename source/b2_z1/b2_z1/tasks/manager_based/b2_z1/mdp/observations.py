@@ -39,7 +39,8 @@ def end_effector_relative_pose(
     asset: Articulation = env.scene[asset_cfg.name]
 
     ee_ids, _ = asset.find_bodies("dummy_target")
-    link0_ids, _ = asset.find_bodies("link00")
+    # link0_ids, _ = asset.find_bodies("link00")
+    link0_ids, _ = asset.find_bodies("base_link")
 
     if len(ee_ids) == 0 or len(link0_ids) == 0:
         return torch.zeros((env.num_envs, 7), device=env.device)

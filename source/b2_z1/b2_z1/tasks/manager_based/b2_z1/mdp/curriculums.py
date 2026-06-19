@@ -65,7 +65,7 @@ def ang_vel_cmd_levels(
         return torch.tensor(0.0, device=env.device)
 
     # 3. Performance: only compute reward and update difficulty at episode end
-    if env.common_step_counter % (env.max_episode_length * 0.5) == 0:
+    if env.common_step_counter % (env.max_episode_length) == 0:
         reward_sums = env.reward_manager._episode_sums.get(reward_term_name)
         if reward_sums is not None:
             reward = torch.mean(reward_sums[env_ids]) / env.max_episode_length_s
@@ -113,7 +113,7 @@ def lin_vel_cmd_levels(
     # --- Performance: only compute at episode end ---
     if (
         env.common_step_counter > 0
-        and env.common_step_counter % (env.max_episode_length * 0.5) == 0
+        and env.common_step_counter % (env.max_episode_length) == 0
     ):
         reward_sums = env.reward_manager._episode_sums.get(reward_term_name)
         if reward_sums is not None:
@@ -157,7 +157,7 @@ def lin_vel_cmd_levels(
 def pos_cmd_levels(
     env,
     env_ids: Sequence[int],
-    reward_term_name: str = "end_effector_position_tracking",
+    reward_term_name: str = "end_effector_position_tracking_exp",
 ) -> torch.Tensor:
     cfg = env.command_manager.get_term("ee_target").cfg
 
@@ -186,7 +186,8 @@ def pos_cmd_levels(
     # --- Performance: only compute at episode end ---
     if (
         env.common_step_counter > 0
-        and env.common_step_counter % (env.max_episode_length * 0.2) == 0
+        and env.common_step_counter % (env.max_episode_length) == 0
+        
     ):
         reward_sums = env.reward_manager._episode_sums.get(reward_term_name)
         if reward_sums is not None:
