@@ -425,7 +425,7 @@ class RewardsCfg:
     # -- feet
     # feet_air_time = RewTerm(
     #     func=mdp.feet_air_time,
-    #     weight=0.25,
+    #     weight=0.125,
     #     params={
     #         "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
     #         "command_name": "base_velocity",
@@ -433,30 +433,30 @@ class RewardsCfg:
     #     },
     # )
     
-    feet_long_air = RewTerm(
-        func=mdp.feet_long_air_penalty,
-        weight=-0.5,
-        params={
-            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
-            "max_air_time": 1.0,
-        },
-    )
-    
-    # air_time_variance = RewTerm(
-    #     func=mdp.air_time_variance_penalty,
-    #     weight=-1.0,
-    #     params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot")},
+    # feet_long_air = RewTerm(
+    #     func=mdp.feet_long_air_penalty,
+    #     weight=-0.5,
+    #     params={
+    #         "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
+    #         "max_air_time": 1.0,
+    #     },
     # )
     
-    feet_height = RewTerm(
-        func=mdp.swing_leg_height_reward,
-        weight=1.0,
-        params={
-            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
-            "asset_cfg": SceneEntityCfg("robot", body_names=".*_foot"),
-            "target_height": 0.15,
-        },
+    air_time_variance = RewTerm(
+        func=mdp.air_time_variance_penalty,
+        weight=-1.0,
+        params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot")},
     )
+    
+    # feet_height = RewTerm(
+    #     func=mdp.swing_leg_height_reward,
+    #     weight=1.0,
+    #     params={
+    #         "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
+    #         "asset_cfg": SceneEntityCfg("robot", body_names=".*_foot"),
+    #         "target_height": 0.15,
+    #     },
+    # )
     
     feet_slide = RewTerm(
         func=mdp.feet_slide,
@@ -495,6 +495,37 @@ class RewardsCfg:
     
     
     
+    stand_still_contact = RewTerm(
+        func=mdp.stand_still_contact_reward,
+        weight=1.5,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
+            "velocity_threshold": 0.1,
+            "contact_force_threshold": 5.0,
+            "target_contacts": 4,
+        },
+    )
+
+    stand_still_air = RewTerm(
+        func=mdp.stand_still_feet_air_penalty,
+        weight=-3.0,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
+            "velocity_threshold": 0.1,
+            "max_air_time": 0.15,
+        },
+    )
+    
+    stand_still_load_balance = RewTerm(
+        func=mdp.stand_still_load_balance_penalty,
+        weight=-0.5,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
+            "velocity_threshold": 0.1,
+        },
+    )
+    
+    
     
     
     
@@ -511,6 +542,8 @@ class RewardsCfg:
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=".*")},
     )
     action_smoothness = RewTerm(func=mdp.smoothness, weight=-0.01)
+     
+    dof_pos_limits = RewTerm(func=mdp.joint_pos_limits, weight=-1.0)
     
     
     # undesired_contacts = RewTerm(
@@ -607,12 +640,12 @@ class B2Z1EnvCfg(ManagerBasedRLEnvCfg):
         
         
         # -- base rewards
-        self.rewards.base_height_l2.params["target_height"] = 0.45
+        self.rewards.base_height_l2.params["target_height"] = 0.5
         self.rewards.base_height_l2.weight = -15.0  # -30.0
         self.rewards.flat_orientation_l2.weight = -3.5 # -3.0
         
-        self.rewards.base_linear_velocity.weight = -2.5
-        self.rewards.base_angular_velocity.weight = -0.25 #-0.1
+        self.rewards.base_linear_velocity.weight = -3.0 # -2.5
+        self.rewards.base_angular_velocity.weight = -0.5 #-0.25
         
         
         
@@ -621,21 +654,26 @@ class B2Z1EnvCfg(ManagerBasedRLEnvCfg):
         self.rewards.joint_deviation.weight = -0.01
         self.rewards.arm_deviation.weight = -2.0
         
-        self.rewards.joint_mirror.weight = -0.35 # -0.25
+        self.rewards.joint_mirror.weight = -0.15 # -0.25
         
         
         
         # -- feet rewards
-        self.rewards.feet_long_air.params["max_air_time"] = 0.6
-        self.rewards.feet_long_air.weight = -1.5
+        # self.rewards.feet_long_air.params["max_air_time"] = 0.6
+        # self.rewards.feet_long_air.weight = -1.5
         
-        # self.rewards.air_time_variance.weight = -1.0
-        self.rewards.feet_height.params["target_height"] = 0.15
-        self.rewards.feet_height.weight = 0.25
+        # self.rewards.feet_air_time.weight = 1.0 
+        self.rewards.air_time_variance.weight = -1.5 #-1.0
+        # self.rewards.feet_height.params["target_height"] = 0.15
+        # self.rewards.feet_height.weight = 0.25
         
         self.rewards.feet_slide.weight = -1.0
         self.rewards.feet_gait.params["synced_feet_pair_names"] = (("FL_foot", "RR_foot"), ("FR_foot", "RL_foot"))
         self.rewards.feet_gait.weight = 1.0
+        
+        self.rewards.stand_still_contact.weight = 1.5
+        self.rewards.stand_still_air.weight = -4.0
+        self.rewards.stand_still_load_balance.weight = -1.0
         
         
         
@@ -657,7 +695,7 @@ class B2Z1PlayEnvCfg(B2Z1EnvCfg):
         super().__post_init__()
         self.scene.num_envs = 32
         
-        self.commands.base_velocity.limit_ranges.lin_vel_x = (0.6, 0.6)
+        self.commands.base_velocity.limit_ranges.lin_vel_x = (0.0, 0.6)
         self.commands.base_velocity.limit_ranges.lin_vel_y = (-0.0, 0.0)
         self.commands.base_velocity.limit_ranges.ang_vel_z = (-0.0, 0.0)
         self.commands.base_velocity.ranges = self.commands.base_velocity.limit_ranges

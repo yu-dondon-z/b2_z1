@@ -407,7 +407,69 @@ class GaitReward(ManagerTermBase):
         se_act_1 = torch.clip(torch.square(contact_time[:, foot_0] - air_time[:, foot_1]), max=self.max_err**2)
         return torch.exp(-(se_act_0 + se_act_1) / self.std)
     
-    
+
+
+
+def stand_still_contact_reward(
+    env,
+    sensor_cfg,
+    velocity_threshold: float = 0.1,
+    contact_force_threshold: float = 5.0,
+    target_contacts: int = 4,
+):
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    cmd = torch.linalg.norm(env.command_manager.get_command("base_velocity"), dim=1)
+    is_still = cmd <= velocity_threshold
+
+    contact_force = torch.norm(
+        contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, :], dim=-1
+    )
+    is_contact = contact_force > contact_force_threshold
+    num_contacts = is_contact.float().sum(dim=1)
+
+    reward = 1.0 - torch.abs(num_contacts - target_contacts) / target_contacts
+    return torch.where(is_still, reward, torch.zeros_like(reward))
+
+
+def stand_still_feet_air_penalty(
+    env,
+    sensor_cfg,
+    velocity_threshold: float = 0.1,
+    max_air_time: float = 0.15,
+):
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    if contact_sensor.data.current_air_time is None:
+        return torch.zeros(env.num_envs, device=env.device)
+
+    cmd = torch.linalg.norm(env.command_manager.get_command("base_velocity"), dim=1)
+    is_still = cmd <= velocity_threshold
+
+    current_air = contact_sensor.data.current_air_time[:, sensor_cfg.body_ids]
+    excess = torch.clamp(current_air - max_air_time, min=0.0)
+    penalty = torch.sum(torch.square(excess), dim=1)
+
+    return torch.where(is_still, penalty, torch.zeros_like(penalty))
+
+
+def stand_still_load_balance_penalty(
+    env,
+    sensor_cfg,
+    velocity_threshold: float = 0.1,
+    eps: float = 1e-6,
+):
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    cmd = torch.linalg.norm(env.command_manager.get_command("base_velocity"), dim=1)
+    is_still = cmd <= velocity_threshold
+
+    fz = torch.clamp(
+        contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, 2],
+        min=0.0,
+    )
+    normalized_fz = fz / (torch.sum(fz, dim=1, keepdim=True) + eps)
+    penalty = torch.var(normalized_fz, dim=1)
+
+    return torch.where(is_still, penalty, torch.zeros_like(penalty))
+
 
 
 """
