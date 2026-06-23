@@ -23,7 +23,7 @@ Joint penalties.
 
 def smoothness(env: ManagerBasedRLEnv) -> torch.Tensor:
     """Penalize the rate of change of the actions using L2 squared kernel."""
-    return torch.sum(torch.square(env.action_manager.action - env.action_manager.action*2 + env.pre_pre_action), dim=1)
+    return torch.sum(torch.square(env.action_manager.action - env.action_manager._prev_action*2 + env._pre_pre_action), dim=1)
 
 def power_penalty(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
     """Penalize power consumption of the robot."""
@@ -551,6 +551,49 @@ def position_command_error_tanh(
     distance = torch.norm(pos_error, dim=1)
     return 1 - torch.tanh(distance / std)
 
+def x_axis_alignment_command_error(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg,
+    base_name: str = "base_link",
+    allow_opposite_direction: bool = False,
+    eps: float = 1.0e-6,
+) -> torch.Tensor:
+    """Penalty for misalignment between dummy_target local x-axis and command local x-axis.
+    Returns 0 when perfectly aligned.
+    Larger value means worse alignment.
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+    ee_id = asset_cfg.body_ids[0]
+    base_id, _ = asset.find_bodies(base_name)
+    base_id = base_id[0]
+
+    command = env.command_manager.get_command(command_name)
+
+    curr_quat_w = asset.data.body_quat_w[:, ee_id]
+    base_quat_w = asset.data.body_quat_w[:, base_id]
+
+    # Current dummy_target orientation in base frame.
+    curr_quat_base = math_utils.quat_mul(
+        math_utils.quat_conjugate(base_quat_w), curr_quat_w
+    )
+
+    # Desired orientation from ee_target command, already in base frame.
+    des_quat_base = command[:, 3:7]
+
+    local_x = torch.zeros((env.num_envs, 3), device=env.device)
+    local_x[:, 0] = 1.0
+
+    curr_x_axis = math_utils.quat_apply(curr_quat_base, local_x)
+    des_x_axis = math_utils.quat_apply(des_quat_base, local_x)
+
+    dot = torch.sum(curr_x_axis * des_x_axis, dim=1).clamp(-1.0 + eps, 1.0 - eps)
+
+    # If opposite direction is also acceptable, treat +x and -x as equivalent.
+    if allow_opposite_direction:
+        dot = torch.abs(dot)
+
+    return 1.0 - dot
 
 def link_stability(
     env: ManagerBasedRLEnv,
@@ -665,4 +708,81 @@ def swing_leg_height_reward(
     return torch.where(is_still, torch.zeros_like(reward), reward)
     
 
+def joint_acc_l2_select(env: ManagerBasedRLEnv, joint_names: list, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """Penalize joint accelerations on the articulation using L2 squared kernel.
+
+    NOTE: Only the joints configured in :attr:`asset_cfg.joint_ids` will have their joint accelerations contribute to the term.
+    """
+    # extract the used quantities (to enable type-hinting)
+    asset: Articulation = env.scene[asset_cfg.name]
+    joint_indices, _ = asset.find_joints(joint_names)
+    return torch.sum(torch.square(asset.data.joint_acc[:, joint_indices]), dim=1)
+
+def action_rate_l2_select(env: ManagerBasedRLEnv, joint_names: list, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """Penalize the rate of change of the actions using L2 squared kernel."""
+    # return torch.sum(torch.square(env.action_manager.action - env.action_manager.prev_action), dim=1)
+
+    asset: Articulation = env.scene[asset_cfg.name]
+    joint_indices, _ = asset.find_joints(joint_names)
+    
+    action = env.action_manager.action[:, joint_indices]
+    prev_action = env.action_manager.prev_action[:, joint_indices]
+    
+    return torch.sum(torch.square(action - prev_action), dim=1)
+
+def joint_torques_l2_select(env: ManagerBasedRLEnv, joint_names: list, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """Penalize joint torques applied on the articulation using L2 squared kernel.
+
+    NOTE: Only the joints configured in :attr:`asset_cfg.joint_ids` will have their joint torques contribute to the term.
+    """
+    # # extract the used quantities (to enable type-hinting)
+    # asset: Articulation = env.scene[asset_cfg.name]
+    # return torch.sum(torch.square(asset.data.applied_torque[:, asset_cfg.joint_ids]), dim=1)
+
+    asset: Articulation = env.scene[asset_cfg.name]
+    joint_indices, _ = asset.find_joints(joint_names)
+    torques = asset.data.applied_torque[:, joint_indices]
+    return torch.sum(torch.square(torques), dim=1)
+
+
+def smoothness_select(env: ManagerBasedRLEnv, joint_names: list, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """Penalize the rate of change of the actions using L2 squared kernel."""
+    # return torch.sum(torch.square(env.action_manager.action - env.action_manager._prev_action*2 + env.action_manager.action_prev_prev), dim=1)
+
+    asset: Articulation = env.scene[asset_cfg.name]
+    joint_indices, _ = asset.find_joints(joint_names)
+    
+    action = env.action_manager.action[:, joint_indices]
+    prev_action = env.action_manager.prev_action[:, joint_indices]
+    action_prev_prev = env._pre_pre_action[:, joint_indices]
+    
+    return torch.sum(torch.square(action - prev_action*2 + action_prev_prev), dim=1)
+    
+    
+ 
+    
+def power_penalty_select(env: ManagerBasedRLEnv, joint_names: list, asset_cfg: SceneEntityCfg) -> torch.Tensor:
+    """Penalize power consumption of the robot."""
+    # extract the used quantities (to enable type-hinting)
+    # asset: Articulation = env.scene[asset_cfg.name]
+    # return torch.sum(torch.abs(asset.data.applied_torque) * torch.abs(asset.data.joint_vel), dim=1)
+
+    asset: Articulation = env.scene[asset_cfg.name]
+    joint_indices, _ = asset.find_joints(joint_names)
+    
+    torques = asset.data.applied_torque[:, joint_indices]
+    joint_velocities = asset.data.joint_vel[:, joint_indices]
+    
+    return torch.sum(torch.abs(torques) * torch.abs(joint_velocities), dim=1)
+
+
+def joint_vel_l2_select(env: ManagerBasedRLEnv, joint_names: list, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """Penalize joint velocities on the articulation using L2 squared kernel.
+
+    NOTE: Only the joints configured in :attr:`asset_cfg.joint_ids` will have their joint velocities contribute to the term.
+    """
+    # extract the used quantities (to enable type-hinting)
+    asset: Articulation = env.scene[asset_cfg.name]
+    joint_indices, _ = asset.find_joints(joint_names)
+    return torch.sum(torch.square(asset.data.joint_vel[:, joint_indices]), dim=1)
 
