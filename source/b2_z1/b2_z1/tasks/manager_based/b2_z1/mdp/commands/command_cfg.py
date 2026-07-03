@@ -45,10 +45,13 @@ class UniformPoseWBCCommandCfg(UniformPoseCommandBaseCfg):
     curriculum_enabled: bool = False
     trajectory_num_points: int = 20
     """Number of points used to visualize the interpolation curve and tracked path."""
+    trajectory_waypoint_count: int = 3
+    """Number of intermediate waypoints used to shape the interpolation path."""
     trajectory_point_spacing: float = 0.02
     """Minimum distance in meters between two recorded end-effector trajectory markers."""
-    trajectory_curve_offset_scale: float = 0.1
-    """Relative scale of the random Bezier control-point offsets used to bend the interpolated trajectory."""
+    trajectory_waypoint_offset_range_m: tuple[float, float] = (0.1, 0.2)
+    """Waypoint offset distance range in meters used to bend the interpolated trajectory."""
+    
     tracking_pose_visualizer_cfg = _build_tracking_pose_visualizer_cfg()
     interpolation_curve_visualizer_cfg = _build_interpolation_curve_visualizer_cfg()
     tracked_trajectory_visualizer_cfg = _build_tracked_trajectory_visualizer_cfg()

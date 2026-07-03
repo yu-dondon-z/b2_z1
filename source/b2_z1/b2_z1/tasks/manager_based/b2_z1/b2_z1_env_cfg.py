@@ -295,6 +295,8 @@ class CommandsCfg:
             yaw=(-0.0, -0.0),
             
         ),    
+        trajectory_waypoint_count=3,
+        trajectory_waypoint_offset_range_m=(0.1, 0.2),
     )
     
 
@@ -724,8 +726,8 @@ class B2Z1PlayEnvCfg(B2Z1EnvCfg):
         self.commands.base_velocity.ranges = self.commands.base_velocity.limit_ranges
         
         
-        self.commands.ee_target.limit_ranges.pos_x = (1.0, 1.0)
-        self.commands.ee_target.limit_ranges.pos_y = (-0.0, 0.0)
+        self.commands.ee_target.limit_ranges.pos_x = (5.0, 5.0)
+        self.commands.ee_target.limit_ranges.pos_y = (-2.0, 2.0)
         self.commands.ee_target.limit_ranges.pos_z = (0.2, 0.2)
         self.commands.ee_target.ranges = self.commands.ee_target.limit_ranges
         
