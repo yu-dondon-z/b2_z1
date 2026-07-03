@@ -62,8 +62,8 @@ class UnitreeUrdfFileCfg(sim_utils.UrdfFileCfg):
         gains=sim_utils.UrdfConverterCfg.JointDriveCfg.PDGainsCfg(stiffness=0, damping=0)
     )
     articulation_props = sim_utils.ArticulationRootPropertiesCfg(
-        enabled_self_collisions=True,
-        # enabled_self_collisions=False,  
+        # enabled_self_collisions=True,
+        enabled_self_collisions=False,  
         
         solver_position_iteration_count=8,
         solver_velocity_iteration_count=4,
@@ -117,11 +117,19 @@ B2_Z1_GUN_CFG = UnitreeArticulationCfg(
             "R[L,R]_thigh_joint": 1.0,
             ".*_calf_joint": -1.5,
             
-            # z1
+            # # z1 -- roted --
+            # "joint1": 0.0,
+            # "joint2": 0.4, 
+            # "joint3": -0.4,
+            # "joint4": -0.4,
+            # "joint5": 0.0,
+            # "joint6": 0.0,
+            
+            # z1 forward
             "joint1": 0.0,
-            "joint2": 0.4, 
-            "joint3": -0.4,
-            "joint4": -0.4,
+            "joint2": 2.55,
+            "joint3": -1.6,
+            "joint4": -1.4,
             "joint5": 0.0,
             "joint6": 0.0,
         },
@@ -146,53 +154,35 @@ B2_Z1_GUN_CFG = UnitreeArticulationCfg(
             friction=0.01,
         ),
         
-        # "z1_motor1": ImplicitActuatorCfg(
-        #     joint_names_expr=["joint1", "joint3", "joint4", "joint5", "joint6"],
-        #     # stiffness=60.0,
-        #     # damping=1.0,
-            
-        #     friction=0.01,
-        #     # effort_limit_sim=30.0,
-        #     effort_limit_sim=90.0,
-        #     velocity_limit_sim=3.1415,
-            
-        # ),
-        
-        # "z1_motor2": ImplicitActuatorCfg(
-        #     joint_names_expr=["joint2"],
-        #     # stiffness=60.0,
-        #     # damping=1.0,
-            
-        #     friction=0.01,
-        #     # effort_limit_sim=60.0,
-        #     effort_limit_sim=90.0,
-        #     velocity_limit_sim=3.1415,    
-        # ),
-        
-        
         "z1_motor1": ImplicitActuatorCfg(
-            joint_names_expr=["joint1", "joint2", "joint3", ],
-            stiffness=250.0,
-            damping=15.0,
+            joint_names_expr=["joint1", "joint3", "joint4", "joint5", "joint6"],
+            # stiffness=60.0,
+            # damping=1.0,
+            
+            stiffness=160.0,
+            damping=5.0,
             
             friction=0.01,
             # effort_limit_sim=30.0,
-            effort_limit_sim=160.0,
+            effort_limit_sim=120.0,
             velocity_limit_sim=3.1415,
             
         ),
         
         "z1_motor2": ImplicitActuatorCfg(
-            joint_names_expr=["joint4", "joint5", "joint6", ],
-            stiffness=120.0,
+            joint_names_expr=["joint2"],
+            # stiffness=60.0,
+            # damping=1.0,
+            
+            stiffness=160.0,
             damping=5.0,
+            
             
             friction=0.01,
             # effort_limit_sim=60.0,
             effort_limit_sim=120.0,
             velocity_limit_sim=3.1415,    
         ),
-        
         
     },
 )

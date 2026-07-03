@@ -185,7 +185,7 @@ class UniformPoseWBCCommand(CommandTerm):
         ee_pos_w = self.robot.data.body_pos_w[env_ids, self.body_idx]
         ee_quat_w = self.robot.data.body_state_w[env_ids, self.body_idx, 3:7]
 
-        start_pos_link0 = self._project_world_point_to_link0_mixed_frame(ee_pos_w, link0_pos_w, link0_quat_w)
+        start_pos_link0 = quat_apply_inverse(link0_quat_w, ee_pos_w - link0_pos_w)
         self.pose_start_pos_w[env_ids] = ee_pos_w
         self.pose_start[env_ids, :2] = start_pos_link0[:, :2]
         self.pose_start[env_ids, 2] = ee_pos_w[:, 2]
@@ -419,37 +419,6 @@ class UniformPoseWBCCommand(CommandTerm):
                 ].clone()
                 self.tracked_trajectory_base_positions[env_id, -1] = current_pos
 
-    def _project_world_point_to_link0_mixed_frame(
-        self,
-        point_w: torch.Tensor,
-        link0_pos_w: torch.Tensor,
-        link0_quat_w: torch.Tensor,
-    ) -> torch.Tensor:
-        delta_xy_w = point_w[:, :2] - link0_pos_w[:, :2]
-
-        local_x = torch.zeros((point_w.shape[0], 3), device=self.device)
-        local_y = torch.zeros((point_w.shape[0], 3), device=self.device)
-        local_x[:, 0] = 1.0
-        local_y[:, 1] = 1.0
-
-        basis_x_w = quat_apply(link0_quat_w, local_x)
-        basis_y_w = quat_apply(link0_quat_w, local_y)
-
-        transform_xy = torch.stack(
-            (
-                torch.stack((basis_x_w[:, 0], basis_y_w[:, 0]), dim=-1),
-                torch.stack((basis_x_w[:, 1], basis_y_w[:, 1]), dim=-1),
-            ),
-            dim=1,
-        )
-
-        local_xy = torch.linalg.solve(transform_xy, delta_xy_w.unsqueeze(-1)).squeeze(-1)
-
-        projected_point = torch.empty_like(point_w)
-        projected_point[:, :2] = local_xy
-        projected_point[:, 2] = point_w[:, 2]
-        return projected_point
-
     def _get_current_trajectory_points(self, env_ids: torch.Tensor | None = None) -> torch.Tensor:
         if env_ids is None:
             link0_pos_w = self.robot.data.body_pos_w[:, self.link0_idx]
@@ -460,7 +429,10 @@ class UniformPoseWBCCommand(CommandTerm):
             link0_quat_w = self.robot.data.body_state_w[env_ids, self.link0_idx, 3:7]
             ee_pos_w = self.robot.data.body_pos_w[env_ids, self.body_idx]
 
-        return self._project_world_point_to_link0_mixed_frame(ee_pos_w, link0_pos_w, link0_quat_w)
+        tracked_points = torch.empty_like(ee_pos_w)
+        tracked_points[:, :2] = quat_apply_inverse(link0_quat_w, ee_pos_w - link0_pos_w)[:, :2]
+        tracked_points[:, 2] = ee_pos_w[:, 2]
+        return tracked_points
 
     def _get_tracked_trajectory_points_w(self) -> torch.Tensor:
         link0_pos_w = self.robot.data.body_pos_w[:, self.link0_idx]

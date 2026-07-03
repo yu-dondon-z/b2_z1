@@ -34,11 +34,6 @@ from b2_z1.assets.unitree import B2_Z1_GUN_CFG
 # from b2_z1.assets.unitree import B2_Z1_CFG
 
 
-B2_JOINT_NAMES = [".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"]
-Z1_JOINT_NAMES = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
-
-
-
 
 ##
 # Scene definition
@@ -237,8 +232,7 @@ class CommandsCfg:
     base_velocity = mdp.command_cfg.UniformVelocityCommandCfg(
         asset_name="robot",
         resampling_time_range=(10.0, 10.0),
-        # rel_standing_envs=0.33,
-        rel_standing_envs=0.66,
+        rel_standing_envs=0.33,
         debug_vis=True,
         heading_command=False,
         ranges=mdp.command_cfg.UniformVelocityCommandCfg.Ranges(
@@ -262,23 +256,44 @@ class CommandsCfg:
         resampling_time_range=(8.0, 10.0),
         debug_vis=True,
         ranges=mdp.command_cfg.UniformPoseWBCCommandCfg.Ranges(     
-            pos_x=(0.4, 0.5),
-            pos_y=(-0.15, 0.15),
-            pos_z=(0.1, 0.1),  # World frame
+            # pos_x=(0.4, 0.5),
+            # pos_y=(-0.15, 0.15),
+            # pos_z=(0.15, 0.15),  # World frame
+            
+            
+            # roll=(-0.0, 0.0),
+            # pitch=(3.14/2, 3.14/2),  # depends on end-effector axis
+            # yaw=(-0.0, -0.0),
+            
+            pos_x=(1.0, 1.0),
+            pos_y=(-0.0, 0.0),
+            pos_z=(0.2, 0.2),  # World frame
             
             
             roll=(-0.0, 0.0),
             pitch=(3.14/2, 3.14/2),  # depends on end-effector axis
             yaw=(-0.0, -0.0),
+            
         ),
         limit_ranges=mdp.command_cfg.UniformPoseWBCCommandCfg.Ranges(
-            pos_x=(0.35, 0.55),
-            pos_y=(-0.5, 0.5),
-            pos_z=(0.0, 0.15),  # World frame
+            # pos_x=(0.35, 0.55),
+            # pos_y=(-0.5, 0.5),
+            # pos_z=(0.0, 0.2),  # World frame
+            
+            # roll=(-0.0, 0.0),
+            # pitch=(3.14/2, 3.14/2),  # depends on end-effector axis
+            # yaw=(-0.0, -0.0),   
+            
+            
+            pos_x=(1.0, 1.0),
+            pos_y=(-0.0, 0.0),
+            pos_z=(0.2, 0.2),  # World frame
+            
             
             roll=(-0.0, 0.0),
             pitch=(3.14/2, 3.14/2),  # depends on end-effector axis
-            yaw=(-0.0, -0.0),   
+            yaw=(-0.0, -0.0),
+            
         ),    
     )
     
@@ -306,26 +321,26 @@ class RewardsCfg:
     
     ########## legged_manip
     
-    end_effector_position_tracking_exp = RewTerm(
-        func=mdp.position_command_error_exp,
-        weight=3.0,
-        params={
-            "asset_cfg": SceneEntityCfg("robot", body_names="dummy_target"),
-            "command_name": "ee_target",
-            "std": math.sqrt(0.1),
-        },
-    )
+    # end_effector_position_tracking_exp = RewTerm(
+    #     func=mdp.position_command_error_exp,
+    #     weight=3.0,
+    #     params={
+    #         "asset_cfg": SceneEntityCfg("robot", body_names="dummy_target"),
+    #         "command_name": "ee_target",
+    #         "std": math.sqrt(0.1),
+    #     },
+    # )
     
     
-    end_effector_position_tracking_fine_grained = RewTerm(
-        func=mdp.position_command_error_tanh,
-        weight=3.0,
-        params={
-            "asset_cfg": SceneEntityCfg("robot", body_names="dummy_target"),
-            "std": 0.1,
-            "command_name": "ee_target",
-        },
-    )
+    # end_effector_position_tracking_fine_grained = RewTerm(
+    #     func=mdp.position_command_error_tanh,
+    #     weight=3.0,
+    #     params={
+    #         "asset_cfg": SceneEntityCfg("robot", body_names="dummy_target"),
+    #         "std": 0.1,
+    #         "command_name": "ee_target",
+    #     },
+    # )
     
     
     # end_effector_orientation_tracking = RewTerm(
@@ -337,16 +352,6 @@ class RewardsCfg:
     #     },
     # )
     
-    end_effector_x_axis_tracking = RewTerm(
-        func=mdp.x_axis_alignment_command_error,
-        weight=-1.0,
-        params={
-            "asset_cfg": SceneEntityCfg("robot", body_names="dummy_target"),
-            "command_name": "ee_target",
-            "base_name": "base_link",
-        },
-    )
-    
     
     
     
@@ -357,18 +362,10 @@ class RewardsCfg:
         weight=-1.0,
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names="dummy_target"),
+            # "link_name": "link06",
             "link_name": "link_gun",
         },
     )
-    
-    # link_stability = RewTerm(
-    #     func=mdp.link_stability,
-    #     weight=-1.0,
-    #     params={
-    #         "asset_cfg": SceneEntityCfg("robot", body_names="dummy_target"),
-    #         "link_name": "link05",
-    #     },
-    # )
 
     
     
@@ -425,24 +422,24 @@ class RewardsCfg:
     
     
     
-    # arm_deviation = RewTerm(
-    #     func=mdp.joint_deviation_l1,
-    #     weight=-0.1,
-    #     params={
-    #         "asset_cfg": SceneEntityCfg(
-    #             "robot", joint_names=[ "joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
-    #         ),
-    #     },
-    # )
-    
-    joint_mirror = RewTerm(
-        func=mdp.joint_mirror,
-        weight=-0.15,
+    arm_deviation = RewTerm(
+        func=mdp.joint_deviation_l1,
+        weight=-0.1,
         params={
-            "asset_cfg": SceneEntityCfg("robot"),
-            "mirror_joints": [["FR.*", "RL.*"], ["FL.*", "RR.*"]],
+            "asset_cfg": SceneEntityCfg(
+                "robot", joint_names=[ "joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
+            ),
         },
     )
+    
+    # joint_mirror = RewTerm(
+    #     func=mdp.joint_mirror,
+    #     weight=-0.15,
+    #     params={
+    #         "asset_cfg": SceneEntityCfg("robot"),
+    #         "mirror_joints": [["FR.*", "RL.*"], ["FL.*", "RR.*"]],
+    #     },
+    # )
     
 
     
@@ -556,81 +553,19 @@ class RewardsCfg:
     
     
     # -- Misc
-    # dof_acc_l2 = RewTerm(func=mdp.joint_acc_l2, weight=-2.5e-7)
-    # action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-0.01)
-    # dof_torques_l2 = RewTerm(func=mdp.joint_torques_l2, weight=-1.0e-5)
+    dof_acc_l2 = RewTerm(func=mdp.joint_acc_l2, weight=-2.5e-7)
+    action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-0.01)
+    dof_torques_l2 = RewTerm(func=mdp.joint_torques_l2, weight=-1.0e-5)
     
-    # joint_power = RewTerm(
-    #     func=mdp.power_penalty,
-    #     weight=-2e-5,
-    #     params={"asset_cfg": SceneEntityCfg("robot", joint_names=".*")},
-    # )
-    # action_smoothness = RewTerm(func=mdp.smoothness, weight=-0.01)
-    
-    
-    # B2
-    dof_acc_l2 = RewTerm(func=mdp.joint_acc_l2_select, 
-                         params={
-                             "joint_names": B2_JOINT_NAMES,
-                             "asset_cfg": SceneEntityCfg("robot")},
-                         weight=-2.5e-7)
-    action_rate_l2 = RewTerm(func=mdp.action_rate_l2_select,
-                             params={
-                                 "joint_names": B2_JOINT_NAMES,
-                                 "asset_cfg": SceneEntityCfg("robot")},
-                             weight=-0.01)
-    
-    dof_torques_l2 = RewTerm(func=mdp.joint_torques_l2_select, 
-                             params={
-                                 "joint_names": B2_JOINT_NAMES, 
-                                 "asset_cfg": SceneEntityCfg("robot")},
-                             weight=-1.0e-5)
-    
-    joint_power = RewTerm(func=mdp.power_penalty_select,
+    joint_power = RewTerm(
+        func=mdp.power_penalty,
         weight=-2e-5,
-        params={
-            "joint_names": B2_JOINT_NAMES,
-            "asset_cfg": SceneEntityCfg("robot")
-        }
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names=".*")},
     )
-    
-    action_smoothness = RewTerm(func=mdp.smoothness_select,
-        weight=-0.01,
-        params={
-            "joint_names": B2_JOINT_NAMES,
-            "asset_cfg": SceneEntityCfg("robot")
-        }
-    ) 
-    
-    
-    # Z1
-    
-    action_rate_l2_z1 = RewTerm(func=mdp.action_rate_l2_select,
-        params={
-            "joint_names": Z1_JOINT_NAMES,
-            "asset_cfg": SceneEntityCfg("robot")
-        },
-        weight=-0.005
-    )
-    
-    joint_vel_z1 = RewTerm(func=mdp.joint_vel_l2_select, 
-        params={
-            "joint_names": Z1_JOINT_NAMES,
-            "asset_cfg": SceneEntityCfg("robot")
-        },
-        weight=-1.0e-4, 
-    )
-    dof_acc_l2_z1 = RewTerm(func=mdp.joint_acc_l2_select,
-        params={
-            "joint_names": Z1_JOINT_NAMES,
-            "asset_cfg": SceneEntityCfg("robot")
-        },
-        weight=-1.0e-6
-    )
-    
-    
+    action_smoothness = RewTerm(func=mdp.smoothness, weight=-0.01)
      
     dof_pos_limits = RewTerm(func=mdp.joint_pos_limits, weight=-1.0)
+    
     
     undesired_contacts = RewTerm(
         func=mdp.uncontacts,
@@ -664,7 +599,7 @@ class CurriculumCfg:
     
     lin_vel_cmd_levels = CurrTerm(func=mdp.lin_vel_cmd_levels)  # type: ignore
     ang_vel_cmd_levels = CurrTerm(func=mdp.ang_vel_cmd_levels)  # type: ignore
-    pos_cmd_levels = CurrTerm(func=mdp.pos_cmd_levels)  # type: ignore
+    # pos_cmd_levels = CurrTerm(func=mdp.pos_cmd_levels)  # type: ignore
     
 
 ##
@@ -718,19 +653,17 @@ class B2Z1EnvCfg(ManagerBasedRLEnvCfg):
         self.rewards.track_lin_vel_xy.weight = 4.5
         self.rewards.track_ang_vel_z.weight = 2.5
         
-        self.rewards.end_effector_position_tracking_exp.weight = 4.0 
-        self.rewards.end_effector_position_tracking_fine_grained.weight = 4.0 # 3.5
-        self.rewards.end_effector_x_axis_tracking.weight = -2.0 # 1.0
+        # self.rewards.end_effector_position_tracking_exp.weight = 4.0 # 3.5
+        # self.rewards.end_effector_position_tracking_fine_grained.weight = 3.5
         
-        self.rewards.ee_stability.weight = -0.25 # -0.2
-        # self.rewards.link_stability.weight = -0.2
+        self.rewards.ee_stability.weight = -0.2 
         
         
         
         # -- base rewards
         self.rewards.base_height_l2.params["target_height"] = 0.5
-        self.rewards.base_height_l2.weight = -25.0  # -15.0 
-        self.rewards.flat_orientation_l2.weight = -5.0 # -3.5
+        self.rewards.base_height_l2.weight = -20.0  # -30.0
+        self.rewards.flat_orientation_l2.weight = -3.5 # -3.0
         
         self.rewards.base_linear_velocity.weight = -3.0 # -2.5
         self.rewards.base_angular_velocity.weight = -0.5 #-0.25
@@ -739,10 +672,10 @@ class B2Z1EnvCfg(ManagerBasedRLEnvCfg):
         
         # -- joint rewards
         self.rewards.hip_deviation.weight = -0.5
-        self.rewards.joint_deviation.weight = -0.025
-        # self.rewards.arm_deviation.weight = -0.5 #-2.0 # base vel tracking
+        self.rewards.joint_deviation.weight = -0.001 # -0.01
+        self.rewards.arm_deviation.weight = -2.5
         
-        self.rewards.joint_mirror.weight = -0.3 # -0.25
+        # self.rewards.joint_mirror.weight = -0.3 # -0.25
         
         
         
@@ -753,7 +686,7 @@ class B2Z1EnvCfg(ManagerBasedRLEnvCfg):
         # self.rewards.feet_air_time.weight = 1.0 
         self.rewards.air_time_variance.weight = -1.5 #-1.0
         self.rewards.feet_height.params["target_height"] = 0.15
-        self.rewards.feet_height.weight = 0.5 #0.25
+        self.rewards.feet_height.weight = 0.1
         
         self.rewards.feet_slide.weight = -1.0
         self.rewards.feet_gait.params["synced_feet_pair_names"] = (("FL_foot", "RR_foot"), ("FR_foot", "RL_foot"))
@@ -761,13 +694,13 @@ class B2Z1EnvCfg(ManagerBasedRLEnvCfg):
         
         self.rewards.stand_still_contact.weight = 1.75 # 1.5
         self.rewards.stand_still_air.weight = -4.5 #-4.0
-        self.rewards.stand_still_load_balance.weight = -1.5 #-1.0
+        self.rewards.stand_still_load_balance.weight = -1.5 # -1.0
         
         
         
         # -- misc rewards
-        self.rewards.joint_power.weight = -2.0e-5
-        self.rewards.dof_torques_l2.weight = -1.0e-5
+        self.rewards.joint_power.weight = -2.5e-5
+        self.rewards.dof_torques_l2.weight = -1.25e-5
         
         self.rewards.undesired_contacts.weight = -1.0
         
@@ -785,17 +718,15 @@ class B2Z1PlayEnvCfg(B2Z1EnvCfg):
         super().__post_init__()
         self.scene.num_envs = 32
         
-        self.episode_length_s = 60.0
-        
         self.commands.base_velocity.limit_ranges.lin_vel_x = (0.0, 0.6)
         self.commands.base_velocity.limit_ranges.lin_vel_y = (-0.0, 0.0)
         self.commands.base_velocity.limit_ranges.ang_vel_z = (-0.0, 0.0)
         self.commands.base_velocity.ranges = self.commands.base_velocity.limit_ranges
         
         
-        self.commands.ee_target.limit_ranges.pos_x = (0.35, 0.5)
-        self.commands.ee_target.limit_ranges.pos_y = (-0.6, 0.6)
-        self.commands.ee_target.limit_ranges.pos_z = (0.0, 0.0)
+        self.commands.ee_target.limit_ranges.pos_x = (1.0, 1.0)
+        self.commands.ee_target.limit_ranges.pos_y = (-0.0, 0.0)
+        self.commands.ee_target.limit_ranges.pos_z = (0.2, 0.2)
         self.commands.ee_target.ranges = self.commands.ee_target.limit_ranges
         
         

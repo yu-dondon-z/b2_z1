@@ -18,7 +18,7 @@ class B2Z1ManagerBasedRLEnv(ManagerBasedRLEnv):
         
         
         # self.z1_joints_index = [4, 9, 14, 15, 16, 17]  # 6 dof arm
-        # self.z1_default_joint_pos = [0.0, 0.2, -0.2, -0.35, 0.0, 0.0]
+        # self.z1_default_joint_pos = [0.0, 2.5, -1.6, -1.4, 0.0, 0.0]
         
     
     def step(self, action: torch.Tensor):

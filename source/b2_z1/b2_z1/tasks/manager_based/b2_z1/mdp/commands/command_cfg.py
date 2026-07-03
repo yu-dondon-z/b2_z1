@@ -66,3 +66,14 @@ class UniformVelocityCommandCfg(UniformVelocityCommandBaseCfg):
     limit_ranges: UniformVelocityCommandBaseCfg.Ranges = None  # type: ignore
     """The range limit """
     curriculum_enabled: bool = False
+    
+    
+class EEDerivedVelocityCommandCfg(UniformVelocityCommandCfg):
+
+    arrival_threshold: float = 0.1
+    """Distance threshold (meters) to the ee_target world position """
+    
+    
+    
+    
+    
