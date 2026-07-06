@@ -28,6 +28,7 @@ from .pose_command_wbc import (
     _build_trajectory_visualizer_cfg,
 )
 
+
 # -- pose
 @configclass
 class UniformPoseWBCCommandCfg(UniformPoseCommandBaseCfg):
@@ -70,11 +71,10 @@ class UniformVelocityCommandCfg(UniformVelocityCommandBaseCfg):
     """The range limit """
     curriculum_enabled: bool = False
     
-    
-class EEDerivedVelocityCommandCfg(UniformVelocityCommandCfg):
 
-    arrival_threshold: float = 0.1
-    """Distance threshold (meters) to the ee_target world position """
+
+
+
     
     
     

@@ -526,7 +526,6 @@ def position_command_error_exp(
     return torch.exp(-error_sq / (std**2))
 
 
-
 def position_command_error_tanh(
     env: ManagerBasedRLEnv,
     command_name: str,

@@ -222,3 +222,61 @@ def pos_cmd_levels(
                         )
 
     return torch.tensor(ranges.pos_x[1], device=env.device)
+
+
+
+
+def vel_cmd_to_ee_pos_levels(
+    env,
+    env_ids: Sequence[int],
+    reward_term_name: str = "track_lin_vel_xy",
+) -> torch.Tensor:
+    # cfg = env.command_manager.get_term("base_velocity").cfg
+    
+    cfg = env.command_manager.get_term("ee_target").cfg
+
+    is_curriculum_enabled = getattr(
+        cfg, "curriculum_enabled", getattr(cfg, "currirulum_enabled", False)
+    )
+    ranges = getattr(cfg, "ranges", None)
+    limit_ranges = getattr(cfg, "limit_ranges", None)
+    force_range = getattr(cfg, "force_range", None)
+    limit_force_range = getattr(cfg, "limit_force_range", None)
+
+    # --- Handle disabled curriculum ---
+    if not is_curriculum_enabled:
+        if ranges is not None and limit_ranges is not None:
+            cfg.ranges = limit_ranges
+        val = (
+            limit_ranges.pos_x[1]
+            if limit_ranges and hasattr(limit_ranges, "pos_x")
+            else 0.0
+        )
+        return torch.tensor(-1.0, device=env.device)
+
+    if ranges is None or not hasattr(ranges, "pos_x"):
+        return torch.tensor(0.0, device=env.device)
+
+    # --- Performance: only compute at episode end ---
+    if (
+        env.common_step_counter > 0
+        and env.common_step_counter % (env.max_episode_length) == 0
+    ):
+        reward_sums = env.reward_manager._episode_sums.get(reward_term_name)
+        if reward_sums is not None:
+            reward = torch.mean(reward_sums[env_ids]) / env.max_episode_length_s
+            reward_term_cfg = env.reward_manager.get_term_cfg(reward_term_name)
+
+            if reward > reward_term_cfg.weight * 0.8:
+
+                #  -- update ee pos level 
+                pos_delta = torch.tensor([-0.05, 0.05], device=env.device)
+
+                # Update position ranges
+                if limit_ranges is not None:
+                    for axis in ["pos_x", "pos_y", "pos_z"]:
+                        _safe_update_range(
+                            ranges, limit_ranges, axis, pos_delta, env.device
+                        )
+            
+    return torch.tensor(ranges.pos_x[1], device=env.device)
