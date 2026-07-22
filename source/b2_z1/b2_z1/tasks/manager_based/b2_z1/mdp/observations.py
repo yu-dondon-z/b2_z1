@@ -8,6 +8,7 @@ from isaaclab.managers import SceneEntityCfg
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv, ManagerBasedEnv
     from isaaclab.assets import Articulation
+    from isaaclab.sensors import RayCaster
 
 from isaaclab.utils.math import quat_apply_inverse, quat_conjugate, quat_mul
 
@@ -59,6 +60,70 @@ def end_effector_relative_pose(
     rel_quat = quat_mul(link0_quat_conj, ee_quat_w)
 
     return torch.cat([rel_pos, rel_quat], dim=-1)
+
+
+################# AMP-specific observations #################
+    
+    
+def foot_pos(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
+    """observe foot position in robot's base frame"""
+    asset: Articulation = env.scene[asset_cfg.name]
+
+    # foot positions in the world frame, relative to the root position
+    foot_pos_w = asset.data.body_pos_w[:, asset_cfg.body_ids, :]
+    root_pos_w = asset.data.root_pos_w.unsqueeze(1)
+    root_quat_w = asset.data.root_quat_w.unsqueeze(1).expand(-1, foot_pos_w.shape[1], -1)
+
+    # rotate into the base frame
+    foot_pos_b = quat_apply_inverse(root_quat_w, foot_pos_w - root_pos_w)
+    return foot_pos_b.reshape(env.num_envs, -1)
+
+
+def base_pos_z_terrain(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg, sensor_cfg: SceneEntityCfg) -> torch.Tensor:
+    """observe base height w.r.t. terrain"""
+    asset: Articulation = env.scene[asset_cfg.name]
+    sensor: RayCaster = env.scene.sensors[sensor_cfg.name]
+
+    # mean terrain height under the robot, ignoring invalid ray hits
+    ray_hits = sensor.data.ray_hits_w[..., 2]
+    valid_mask = ~torch.isnan(ray_hits) & ~torch.isinf(ray_hits) & (torch.abs(ray_hits) < 1e6)
+    ray_hits_masked = torch.where(valid_mask, ray_hits, torch.full_like(ray_hits, float("nan")))
+    terrain_height = torch.nanmean(ray_hits_masked, dim=1)
+
+    # for envs where all hits are invalid, fall back to zero terrain height
+    all_invalid_mask = torch.isnan(terrain_height)
+    if all_invalid_mask.any():
+        terrain_height[all_invalid_mask] = 0.0
+
+    base_z = asset.data.root_pos_w[:, 2] - terrain_height
+    return base_z.unsqueeze(-1)
+
+# [0, 4, 8, 1, 5, 9, 2, 6, 10, 3, 7, 11]  # lab-> data
+
+def joint_pos_reindex(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"), indices: list = None) -> torch.Tensor:
+    """The joint positions of the asset, reindexed to match the dataset's joint order.
+
+    Note: Only the joints configured in :attr:`asset_cfg.joint_ids` will have their positions returned.
+    """
+    if indices is None:
+        indices = [0, 4, 8, 1, 5, 9, 2, 6, 10, 3, 7, 11]  # lab-> data
+    # extract the used quantities (to enable type-hinting)
+    asset: Articulation = env.scene[asset_cfg.name]
+    joint_pos = asset.data.joint_pos[:, asset_cfg.joint_ids]
+    return joint_pos[:, indices]
+
+
+def joint_vel_reindex(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"), indices: list = None) -> torch.Tensor:
+    """The joint velocities of the asset, reindexed to match the dataset's joint order.
+
+    Note: Only the joints configured in :attr:`asset_cfg.joint_ids` will have their velocities returned.
+    """
+    if indices is None:
+        indices = [0, 4, 8, 1, 5, 9, 2, 6, 10, 3, 7, 11]  # lab-> data
+    # extract the used quantities (to enable type-hinting)
+    asset: Articulation = env.scene[asset_cfg.name]
+    joint_vel = asset.data.joint_vel[:, asset_cfg.joint_ids]
+    return joint_vel[:, indices]
 
 
 
