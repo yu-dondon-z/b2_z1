@@ -131,6 +131,11 @@ class B2Z1ManagerAMPBasedRLEnv(ManagerBasedRLEnv):
             self._reset_idx(reset_env_ids) 
             
             #! amp reset
+            # env ids whose root/joint state gets overwritten by the AMP reference frame below.
+            # `_reset_idx` above already resampled the command terms (e.g. ee_target) using the
+            # pre-override pose, so these ids need their commands re-sampled once the AMP pose
+            # has actually been written into the simulation.
+            amp_override_env_ids = None
             if self.cfg.reference_state_initialization:
                 prob = self.cfg.reference_state_initialization_prob
                 robot = self.scene['robot']
@@ -139,6 +144,7 @@ class B2Z1ManagerAMPBasedRLEnv(ManagerBasedRLEnv):
                     frames = self.amp_loader.get_full_frame_batch(len(reset_env_ids))
                     self._reset_dofs_amp(reset_env_ids, frames, robot)
                     self._reset_root_states_amp(reset_env_ids, frames, robot)
+                    amp_override_env_ids = reset_env_ids
                 elif (prob > 0.0 and prob < 1.0):
                     use_ref = torch.rand(len(reset_env_ids), device=self.device) < prob
                     ref_env_ids = reset_env_ids[use_ref]
@@ -147,6 +153,7 @@ class B2Z1ManagerAMPBasedRLEnv(ManagerBasedRLEnv):
                         frames = self.amp_loader.get_full_frame_batch(len(ref_env_ids))
                         self._reset_dofs_amp(ref_env_ids, frames, robot)
                         self._reset_root_states_amp(ref_env_ids, frames, robot)
+                        amp_override_env_ids = ref_env_ids
   
                 
                 
@@ -154,6 +161,12 @@ class B2Z1ManagerAMPBasedRLEnv(ManagerBasedRLEnv):
             # update articulation kinematics
             self.scene.write_data_to_sim()
             self.sim.forward()
+
+            # re-sample the ee target command for envs whose pose was just overwritten by the
+            # AMP reference frame, so the tracked trajectory/start point start from the robot's
+            # actual post-reset position instead of the stale pre-override pose.
+            if amp_override_env_ids is not None and len(amp_override_env_ids) > 0:
+                self.command_manager.get_term("ee_target").reset(amp_override_env_ids)
 
             # if sensors are added to the scene, make sure we render to reflect changes in reset
             if self.sim.has_rtx_sensors() and self.cfg.rerender_on_reset:

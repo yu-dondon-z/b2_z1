@@ -706,7 +706,6 @@ class B2Z1AMPEnvCfg(ManagerBasedRLEnvCfg):
         ######### AMP Settings ###########
         self.reference_state_initialization = True
         self.reference_state_initialization_prob = 1.0
-        self.amp_reset = True
         
         if self.reference_state_initialization:
             from .agents.rsl_rl_amp_cfg import MOTION_FILES
@@ -796,7 +795,6 @@ class B2Z1AMPEnvCfg_Play(B2Z1AMPEnvCfg):
         self.scene.num_envs = 32
         self.episode_length_s = 5.0
         
-        self.amp_reset = False
         
         # self.commands.base_velocity.limit_ranges.lin_vel_x = (-0.6, 0.6)
         # self.commands.base_velocity.limit_ranges.lin_vel_y = (-0.6, 0.6)
