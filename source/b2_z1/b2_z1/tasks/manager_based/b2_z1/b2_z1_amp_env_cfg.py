@@ -286,6 +286,7 @@ class CommandsCfg:
         rel_standing_envs=0.0,
         debug_vis=True,
         heading_command=False,
+        arrival_threshold=0.7,
         ranges=mdp.command_cfg.UniformVelocityCommandCfg.Ranges(
             lin_vel_x=(-0.0, 0.0),
             lin_vel_y=(-0.0, 0.0),
@@ -382,26 +383,26 @@ class RewardsCfg:
     
     ########## legged_manip
     
-    # end_effector_position_tracking_exp = RewTerm(
-    #     func=mdp.position_command_error_exp,
-    #     weight=3.0,
-    #     params={
-    #         "asset_cfg": SceneEntityCfg("robot", body_names="dummy_target"),
-    #         "command_name": "ee_target",
-    #         "std": math.sqrt(0.1),
-    #     },
-    # )
+    end_effector_position_tracking_exp = RewTerm(
+        func=mdp.position_command_error_exp,
+        weight=3.0,
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names="dummy_target"),
+            "command_name": "ee_target",
+            "std": math.sqrt(0.1),
+        },
+    )
     
     
-    # end_effector_position_tracking_fine_grained = RewTerm(
-    #     func=mdp.position_command_error_tanh,
-    #     weight=3.0,
-    #     params={
-    #         "asset_cfg": SceneEntityCfg("robot", body_names="dummy_target"),
-    #         "std": 0.1,
-    #         "command_name": "ee_target",
-    #     },
-    # )
+    end_effector_position_tracking_fine_grained = RewTerm(
+        func=mdp.position_command_error_tanh,
+        weight=3.0,
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names="dummy_target"),
+            "std": 0.1,
+            "command_name": "ee_target",
+        },
+    )
     
     
     # end_effector_orientation_tracking = RewTerm(
@@ -652,7 +653,10 @@ class CurriculumCfg:
     # pos_cmd_levels = CurrTerm(func=mdp.pos_cmd_levels)  # type: ignore
     
     
-    vel_cmd_to_pos_levels = CurrTerm(func=mdp.vel_cmd_to_ee_pos_levels)  # type: ignore    
+    vel_cmd_to_pos_levels = CurrTerm(
+        func=mdp.vel_cmd_to_ee_pos_levels,
+        params={"reward_threshold": 0.65}
+    )  # type: ignore    
 
 ##
 # Environment configuration
@@ -702,6 +706,7 @@ class B2Z1AMPEnvCfg(ManagerBasedRLEnvCfg):
         ######### AMP Settings ###########
         self.reference_state_initialization = True
         self.reference_state_initialization_prob = 1.0
+        self.amp_reset = True
         
         if self.reference_state_initialization:
             from .agents.rsl_rl_amp_cfg import MOTION_FILES
@@ -714,11 +719,19 @@ class B2Z1AMPEnvCfg(ManagerBasedRLEnvCfg):
           
         # -- task rewards
         
-        self.rewards.track_lin_vel_xy.weight = 4.5
-        self.rewards.track_ang_vel_z.weight = 2.5
+        # self.rewards.track_lin_vel_xy.weight = 4.5
+        # self.rewards.track_ang_vel_z.weight = 2.5
         
         # self.rewards.end_effector_position_tracking_exp.weight = 4.0 # 3.5
         # self.rewards.end_effector_position_tracking_fine_grained.weight = 3.5
+        
+        self.rewards.track_lin_vel_xy.weight = 2.5
+        self.rewards.track_ang_vel_z.weight = 1.5
+        
+        self.rewards.end_effector_position_tracking_exp.weight = 4.0 # 3.5
+        self.rewards.end_effector_position_tracking_fine_grained.weight = 2.5
+        
+        
         
         self.rewards.ee_stability.weight = -0.2 
         
@@ -736,7 +749,7 @@ class B2Z1AMPEnvCfg(ManagerBasedRLEnvCfg):
         # -- joint rewards
         self.rewards.hip_deviation.weight = -0.5
         # self.rewards.joint_deviation.weight = -0.005 # -0.01
-        self.rewards.arm_deviation.weight = -3.0 # -0.5 #
+        self.rewards.arm_deviation.weight = -0.5 # -3.0 # 
         
         # self.rewards.joint_mirror.weight = -0.3 # -0.25
         
@@ -768,7 +781,8 @@ class B2Z1AMPEnvCfg(ManagerBasedRLEnvCfg):
         self.rewards.undesired_contacts.weight = -1.0
         
         
-        self.commands.base_velocity.curriculum_enabled = True
+        # self.commands.base_velocity.curriculum_enabled = True
+        self.commands.base_velocity.curriculum_enabled = False
         self.commands.ee_target.curriculum_enabled = True
         # self.commands.ee_target.curriculum_enabled = False
         
@@ -780,9 +794,9 @@ class B2Z1AMPEnvCfg_Play(B2Z1AMPEnvCfg):
     def __post_init__(self):
         super().__post_init__()
         self.scene.num_envs = 32
+        self.episode_length_s = 5.0
         
-        
-        self.episode_length_s = 40.0
+        self.amp_reset = False
         
         # self.commands.base_velocity.limit_ranges.lin_vel_x = (-0.6, 0.6)
         # self.commands.base_velocity.limit_ranges.lin_vel_y = (-0.6, 0.6)
@@ -794,12 +808,18 @@ class B2Z1AMPEnvCfg_Play(B2Z1AMPEnvCfg):
         self.commands.base_velocity.ranges = self.commands.base_velocity.limit_ranges
         
         
-        # self.commands.ee_target.limit_ranges.pos_x = (-5.0, 5.0)
+        
+        # self.commands.ee_target.limit_ranges.pos_x = (1.0, 1.45)
+        # self.commands.ee_target.limit_ranges.pos_y = (-0.0, 0.0)
+        # self.commands.ee_target.limit_ranges.pos_z = (0.0, 0.02)
+        
         self.commands.ee_target.limit_ranges.pos_x = (1.0, 6.0)
         self.commands.ee_target.limit_ranges.pos_y = (-5.0, 5.0)
-        self.commands.ee_target.limit_ranges.pos_z = (0.0, 0.02)
+        self.commands.ee_target.limit_ranges.pos_z = (0.0, 0.2)
+        
         self.commands.ee_target.ranges = self.commands.ee_target.limit_ranges
         
         
         
-        
+        self.terminations.bad_orientation = None
+        self.terminations.base_contact = None

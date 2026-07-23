@@ -229,6 +229,7 @@ def pos_cmd_levels(
 def vel_cmd_to_ee_pos_levels(
     env,
     env_ids: Sequence[int],
+    reward_threshold: float = 0.8,
     reward_term_name: str = "track_lin_vel_xy",
 ) -> torch.Tensor:
     # cfg = env.command_manager.get_term("base_velocity").cfg
@@ -267,7 +268,7 @@ def vel_cmd_to_ee_pos_levels(
             reward = torch.mean(reward_sums[env_ids]) / env.max_episode_length_s
             reward_term_cfg = env.reward_manager.get_term_cfg(reward_term_name)
 
-            if reward > reward_term_cfg.weight * 0.8:
+            if reward > reward_term_cfg.weight * reward_threshold:
 
                 #  -- update ee pos level 
                 pos_delta = torch.tensor([-0.05, 0.05], device=env.device)
