@@ -717,22 +717,27 @@ class B2Z1AMPEnvCfg(ManagerBasedRLEnvCfg):
         ######### Reward Settings #########
           
         # -- task rewards
+
+        # stage one:  
+        self.rewards.track_lin_vel_xy.weight = 4.5
+        self.rewards.track_ang_vel_z.weight = 2.5
         
-        # self.rewards.track_lin_vel_xy.weight = 4.5
-        # self.rewards.track_ang_vel_z.weight = 2.5
+        self.rewards.end_effector_position_tracking_exp = None
+        self.rewards.end_effector_position_tracking_fine_grained = None
         
         # self.rewards.end_effector_position_tracking_exp.weight = 4.0 # 3.5
         # self.rewards.end_effector_position_tracking_fine_grained.weight = 3.5
         
-        self.rewards.track_lin_vel_xy.weight = 2.5
-        self.rewards.track_ang_vel_z.weight = 1.5
+        # stage two:
+        # self.rewards.track_lin_vel_xy.weight = 2.5
+        # self.rewards.track_ang_vel_z.weight = 1.5
         
-        self.rewards.end_effector_position_tracking_exp.weight = 4.0 # 3.5
-        self.rewards.end_effector_position_tracking_fine_grained.weight = 2.5
+        # self.rewards.end_effector_position_tracking_exp.weight = 4.0 # 3.5
+        # self.rewards.end_effector_position_tracking_fine_grained.weight = 2.5
         
         
         
-        self.rewards.ee_stability.weight = -0.2 
+        self.rewards.ee_stability.weight = -0.1 #-0.2 
         
         
         
@@ -748,7 +753,8 @@ class B2Z1AMPEnvCfg(ManagerBasedRLEnvCfg):
         # -- joint rewards
         self.rewards.hip_deviation.weight = -0.5
         # self.rewards.joint_deviation.weight = -0.005 # -0.01
-        self.rewards.arm_deviation.weight = -0.5 # -3.0 # 
+        self.rewards.arm_deviation.weight = -3.0 # -0.5 # 
+        # self.rewards.arm_deviation = None
         
         # self.rewards.joint_mirror.weight = -0.3 # -0.25
         
@@ -780,8 +786,8 @@ class B2Z1AMPEnvCfg(ManagerBasedRLEnvCfg):
         self.rewards.undesired_contacts.weight = -1.0
         
         
-        # self.commands.base_velocity.curriculum_enabled = True
-        self.commands.base_velocity.curriculum_enabled = False
+        self.commands.base_velocity.curriculum_enabled = True
+        # self.commands.base_velocity.curriculum_enabled = False
         self.commands.ee_target.curriculum_enabled = True
         # self.commands.ee_target.curriculum_enabled = False
         
