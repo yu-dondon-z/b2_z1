@@ -6,7 +6,6 @@
 import math
 
 import isaaclab.sim as sim_utils
-import isaaclab.terrains as terrain_gen
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg
 from isaaclab.managers import EventTermCfg as EventTerm
@@ -20,7 +19,6 @@ from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils import configclass
 from isaaclab.sensors import ContactSensorCfg, RayCasterCfg, patterns
 
-from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
 from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
 
@@ -30,11 +28,18 @@ from . import mdp
 # Pre-defined configs
 ##
 
-from b2_z1.assets.unitree import B2_Z1_GUN_CFG
+from b2_z1.assets.unitree import B2_Z1_GUN_CFG, B2_Z1_NO_STICK_CFG
 # from b2_z1.assets.unitree import B2_Z1_CFG
 
 B2_JOINT_NAMES = [".*_hip_joint", ".*_calf_joint", ".*_thigh_joint"]
 Z1_JOINT_NAMES = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
+
+GROUND_MATERIAL_CFG = sim_utils.RigidBodyMaterialCfg(
+    friction_combine_mode="multiply",
+    restitution_combine_mode="multiply",
+    static_friction=1.0,
+    dynamic_friction=1.0,
+)
 
 ##
 # Scene definition
@@ -46,23 +51,27 @@ class B2Z1SceneCfg(InteractiveSceneCfg):
     """Configuration for a cart-pole scene."""
 
     # ground plane
-    terrain = TerrainImporterCfg(
+    terrain = AssetBaseCfg(
         prim_path="/World/ground",
-        terrain_type="plane",
-        collision_group=-1,
-        
-        physics_material=sim_utils.RigidBodyMaterialCfg(
-            friction_combine_mode="multiply",
-            restitution_combine_mode="multiply",
-            static_friction=1.0,
-            dynamic_friction=1.0,
+        # A local static cuboid avoids the remote USD used by GroundPlaneCfg.
+        # Without a TerrainImporter, InteractiveScene keeps its unique grid
+        # origins for every parallel environment.
+        spawn=sim_utils.CuboidCfg(
+            size=(200.0, 200.0, 0.10),
+            collision_props=sim_utils.CollisionPropertiesCfg(),
+            visual_material=sim_utils.PreviewSurfaceCfg(
+                diffuse_color=(0.12, 0.12, 0.12),
+                roughness=0.9,
+            ),
+            physics_material=GROUND_MATERIAL_CFG,
         ),
-        debug_vis=False,
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.0, 0.0, -0.05)),
+        collision_group=-1,
     )
 
     # robot
     # robot: ArticulationCfg = B2_Z1_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-    robot: ArticulationCfg = B2_Z1_GUN_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+    robot: ArticulationCfg = B2_Z1_NO_STICK_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
     
     contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=3, 
                                       track_air_time=True, debug_vis=False)
@@ -88,8 +97,13 @@ class B2Z1SceneCfg(InteractiveSceneCfg):
 class ActionsCfg:
     """Action specifications for the MDP."""
 
-    JointPositionAction = mdp.JointPositionActionCfg(
-        asset_name="robot", joint_names=[".*"], scale=0.25, use_default_offset=True, clip={".*": (-100.0, 100.0)}
+    JointPositionAction = mdp.FilteredJointPositionActionCfg(
+        asset_name="robot",
+        joint_names=[".*"],
+        scale=0.25,
+        use_default_offset=True,
+        clip={".*": (-100.0, 100.0)},
+        alpha=0.20,
     )
 
 @configclass
@@ -210,6 +224,44 @@ class EventCfg:
         },
     )
 
+    # Sim2Sim robustness: the Z1 payload and the contact model move the whole
+    # robot CoM slightly differently in MuJoCo. Train across that offset
+    # instead of relying on one exact PhysX mass distribution.
+    base_com = EventTerm(
+        func=mdp.randomize_rigid_body_com,
+        mode="startup",
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names="base_link"),
+            "com_range": {
+                "x": (-0.04, 0.04),
+                "y": (-0.04, 0.04),
+                "z": (-0.02, 0.02),
+            },
+        },
+    )
+
+    actuator_gains = EventTerm(
+        func=mdp.randomize_actuator_gains,
+        mode="startup",
+        params={
+            "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
+            "stiffness_distribution_params": (0.80, 1.20),
+            "damping_distribution_params": (0.60, 1.40),
+            "operation": "scale",
+        },
+    )
+
+    joint_dynamics = EventTerm(
+        func=mdp.randomize_joint_parameters,
+        mode="startup",
+        params={
+            "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
+            "friction_distribution_params": (0.0, 0.08),
+            "armature_distribution_params": (0.0, 0.12),
+            "operation": "abs",
+        },
+    )
+
     # reset
     base_external_force_torque = EventTerm(
         func=mdp.apply_external_force_torque,
@@ -225,14 +277,20 @@ class EventCfg:
         func=mdp.reset_root_state_uniform,
         mode="reset",
         params={
-            "pose_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5), "yaw": (-3.14, 3.14)},
+            "pose_range": {
+                "x": (-0.5, 0.5),
+                "y": (-0.5, 0.5),
+                "roll": (-0.10, 0.10),
+                "pitch": (-0.10, 0.10),
+                "yaw": (-3.14, 3.14),
+            },
             "velocity_range": {
-                "x": (0.0, 0.0),
-                "y": (0.0, 0.0),
-                "z": (0.0, 0.0),
-                "roll": (0.0, 0.0),
-                "pitch": (0.0, 0.0),
-                "yaw": (0.0, 0.0),
+                "x": (-0.15, 0.15),
+                "y": (-0.15, 0.15),
+                "z": (-0.10, 0.10),
+                "roll": (-0.30, 0.30),
+                "pitch": (-0.30, 0.30),
+                "yaw": (-0.15, 0.15),
             },
         },
     )
@@ -250,8 +308,16 @@ class EventCfg:
     push_robot = EventTerm(
         func=mdp.push_by_setting_velocity,
         mode="interval",
-        interval_range_s=(5.0, 10.0),
-        params={"velocity_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5)}},
+        interval_range_s=(3.0, 6.0),
+        params={
+            "velocity_range": {
+                "x": (-0.5, 0.5),
+                "y": (-0.7, 0.7),
+                "roll": (-0.45, 0.45),
+                "pitch": (-0.35, 0.35),
+                "yaw": (-0.25, 0.25),
+            }
+        },
     )
     
 
@@ -284,7 +350,8 @@ class CommandsCfg:
         resampling_time_range=(10.0, 10.0),
         # rel_standing_envs=0.33,
         rel_standing_envs=0.0,
-        debug_vis=True,
+        # Training does not need the remote arrow USD marker.
+        debug_vis=False,
         heading_command=False,
         arrival_threshold=0.7,
         ranges=mdp.command_cfg.UniformVelocityCommandCfg.Ranges(
@@ -313,7 +380,7 @@ class CommandsCfg:
         asset_name="robot",
         body_name="dummy_target",
         resampling_time_range=(8.0, 10.0),
-        debug_vis=True,
+        debug_vis=False,
         ranges=mdp.command_cfg.UniformPoseWBCCommandCfg.Ranges(     
             # pos_x=(0.4, 0.5),
             # pos_y=(-0.15, 0.15),
@@ -324,9 +391,11 @@ class CommandsCfg:
             # pitch=(3.14/2, 3.14/2),  # depends on end-effector axis
             # yaw=(-0.0, -0.0),
             
-            pos_x=(1.0, 1.0),
-            pos_y=(-0.0, 0.0),
-            pos_z=(0.0, 0.2),  # World frame
+            # Start with a one-metre-long, centred path. Curriculum later
+            # extends only the forward endpoint.
+            pos_x=(2.0, 2.0),
+            pos_y=(0.0, 0.0),
+            pos_z=(0.10, 0.10),  # World frame
             
             
             roll=(-0.0, 0.0),
@@ -344,10 +413,11 @@ class CommandsCfg:
             # yaw=(-0.0, -0.0),   
             
             
-            pos_x=(1.0, 6.0),
+            pos_x=(2.0, 6.0),
             # pos_x=(-4.0, 6.0),
-            pos_y=(-5.0, 5.0),
-            pos_z=(0.0, 0.2),  # World frame
+            # Keep the tool trajectory on B2's longitudinal centerline.
+            pos_y=(0.0, 0.0),
+            pos_z=(0.10, 0.10),  # World frame
             
             
             roll=(-0.0, 0.0),
@@ -356,7 +426,12 @@ class CommandsCfg:
             
         ),    
         trajectory_waypoint_count=3,
-        trajectory_waypoint_offset_range_m=(0.1, 0.2),
+        # Zero offset makes all intermediate waypoints lie on the straight
+        # centreline from the fixed start to the forward target.
+        trajectory_waypoint_offset_range_m=(0.0, 0.0),
+        # link00 is centred on base_link. Starting one metre ahead leaves
+        # clearance for B2 and the Z1 arm before the tracked line begins.
+        trajectory_start_pos=(1.0, 0.0, 0.10),
     )
     
 
@@ -437,7 +512,10 @@ class RewardsCfg:
     
     base_linear_velocity = RewTerm(func=mdp.lin_vel_z_l2, weight=-2.0)
     base_angular_velocity = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.05)
-    # flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-1.0)
+    # Directly penalize accumulated roll/pitch. Angular-velocity penalties
+    # alone allow a slow lean that looks acceptable in PhysX but eventually
+    # tips over in MuJoCo.
+    flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-3.0)
     
     base_height_l2 = RewTerm(
         func=mdp.base_height_l2,
@@ -666,7 +744,7 @@ class CurriculumCfg:
 @configclass
 class B2Z1AMPEnvCfg(ManagerBasedRLEnvCfg):
     # Scene settings
-    scene: B2Z1SceneCfg = B2Z1SceneCfg(num_envs=4096, env_spacing=4.0)
+    scene: B2Z1SceneCfg = B2Z1SceneCfg(num_envs=1024, env_spacing=4.0)
     # Basic settings
     observations: ObservationsCfg = ObservationsCfg()
     actions: ActionsCfg = ActionsCfg()
@@ -689,7 +767,7 @@ class B2Z1AMPEnvCfg(ManagerBasedRLEnvCfg):
         # simulation settings 
         self.sim.dt = 0.005
         self.sim.render_interval = self.decimation
-        self.sim.physics_material = self.scene.terrain.physics_material
+        self.sim.physics_material = GROUND_MATERIAL_CFG
         
         # PhysX settings
         self.sim.physx.solver_type = 1  # TGS solver
@@ -705,7 +783,9 @@ class B2Z1AMPEnvCfg(ManagerBasedRLEnvCfg):
         
         ######### AMP Settings ###########
         self.reference_state_initialization = True
-        self.reference_state_initialization_prob = 1.0
+        # Keep AMP motion starts, but also teach recovery from ordinary
+        # standing and perturbed states required by deployment.
+        self.reference_state_initialization_prob = 0.5
         
         if self.reference_state_initialization:
             from .agents.rsl_rl_amp_cfg import MOTION_FILES
@@ -718,22 +798,12 @@ class B2Z1AMPEnvCfg(ManagerBasedRLEnvCfg):
           
         # -- task rewards
 
-        # stage one:  
-        self.rewards.track_lin_vel_xy.weight = 4.5
-        self.rewards.track_ang_vel_z.weight = 2.5
-        
-        self.rewards.end_effector_position_tracking_exp = None
-        self.rewards.end_effector_position_tracking_fine_grained = None
-        
-        # self.rewards.end_effector_position_tracking_exp.weight = 4.0 # 3.5
-        # self.rewards.end_effector_position_tracking_fine_grained.weight = 3.5
-        
-        # stage two:
-        # self.rewards.track_lin_vel_xy.weight = 2.5
-        # self.rewards.track_ang_vel_z.weight = 1.5
-        
-        # self.rewards.end_effector_position_tracking_exp.weight = 4.0 # 3.5
-        # self.rewards.end_effector_position_tracking_fine_grained.weight = 2.5
+        # Stage two: retain locomotion tracking while explicitly teaching the
+        # arm endpoint to follow the centred forward trajectory.
+        self.rewards.track_lin_vel_xy.weight = 2.5
+        self.rewards.track_ang_vel_z.weight = 1.5
+        self.rewards.end_effector_position_tracking_exp.weight = 4.0
+        self.rewards.end_effector_position_tracking_fine_grained.weight = 2.5
         
         
         
@@ -747,13 +817,16 @@ class B2Z1AMPEnvCfg(ManagerBasedRLEnvCfg):
         
         self.rewards.base_linear_velocity.weight = -3.0 # -2.5
         self.rewards.base_angular_velocity.weight = -0.5 #-0.25
+        self.rewards.flat_orientation_l2.weight = -3.0
         
         
         
         # -- joint rewards
         self.rewards.hip_deviation.weight = -0.5
         # self.rewards.joint_deviation.weight = -0.005 # -0.01
-        self.rewards.arm_deviation.weight = -3.0 # -0.5 # 
+        # A strong -3.0 penalty prevents the arm from leaving its nominal
+        # posture and competes directly with endpoint tracking.
+        self.rewards.arm_deviation.weight = -0.5
         # self.rewards.arm_deviation = None
         
         # self.rewards.joint_mirror.weight = -0.3 # -0.25
@@ -799,7 +872,36 @@ class B2Z1AMPEnvCfg_Play(B2Z1AMPEnvCfg):
     def __post_init__(self):
         super().__post_init__()
         self.scene.num_envs = 32
-        self.episode_length_s = 5.0
+        # Keep each playback episode running long enough to inspect sustained
+        # locomotion and end-effector tracking before the automatic reset.
+        self.episode_length_s = 60.0
+
+        # The centerline checkpoints in
+        # 2026-07-28_09-31-44_ee_centerline_stage2 were trained with direct
+        # joint-position actions.  The EMA action filter below was added later
+        # for MuJoCo sim-to-sim work and changes both the applied action and the
+        # previous-action observation, so it must not be used to play those
+        # historical checkpoints.
+        self.actions.JointPositionAction = mdp.JointPositionActionCfg(
+            asset_name="robot",
+            joint_names=[".*"],
+            scale=0.25,
+            use_default_offset=True,
+            clip={".*": (-100.0, 100.0)},
+        )
+
+        # Use nominal dynamics for deterministic policy inspection.  These
+        # randomizations were introduced after the centerline run and are
+        # useful for new sim-to-sim training, not for evaluating the saved
+        # PhysX checkpoint under its original action/dynamics assumptions.
+        self.events.physics_material = None
+        self.events.add_base_mass = None
+        self.events.base_com = None
+        self.events.actuator_gains = None
+        self.events.joint_dynamics = None
+        self.events.base_external_force_torque = None
+        self.events.push_robot = None
+        self.reference_state_initialization_prob = 1.0
         
         
         # self.commands.base_velocity.limit_ranges.lin_vel_x = (-0.6, 0.6)
@@ -817,13 +919,25 @@ class B2Z1AMPEnvCfg_Play(B2Z1AMPEnvCfg):
         # self.commands.ee_target.limit_ranges.pos_y = (-0.0, 0.0)
         # self.commands.ee_target.limit_ranges.pos_z = (0.0, 0.02)
         
-        self.commands.ee_target.limit_ranges.pos_x = (1.0, 6.0)
-        self.commands.ee_target.limit_ranges.pos_y = (-5.0, 5.0)
-        self.commands.ee_target.limit_ranges.pos_z = (0.0, 0.2)
+        self.commands.ee_target.limit_ranges.pos_x = (2.0, 6.0)
+        self.commands.ee_target.limit_ranges.pos_y = (0.0, 0.0)
+        self.commands.ee_target.limit_ranges.pos_z = (0.10, 0.10)
         
         self.commands.ee_target.ranges = self.commands.ee_target.limit_ranges
+        # Show the desired straight centerline and the actual end-effector
+        # trace during playback. Training keeps this disabled for performance.
+        self.commands.ee_target.debug_vis = True
         
         
         
         self.terminations.bad_orientation = None
         self.terminations.base_contact = None
+
+
+@configclass
+class B2Z1AMPGunEnvCfg_Play(B2Z1AMPEnvCfg_Play):
+    """Trajectory-tracking AMP playback with the cylindrical welding gun."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.robot = B2_Z1_GUN_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")

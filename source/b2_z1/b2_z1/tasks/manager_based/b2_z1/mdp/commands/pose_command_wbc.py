@@ -204,10 +204,27 @@ class UniformPoseWBCCommand(CommandTerm):
         ee_pos_w = self.robot.data.body_pos_w[env_ids, self.body_idx]
         ee_quat_w = self.robot.data.body_state_w[env_ids, self.body_idx, 3:7]
 
-        self.pose_start_pos_w[env_ids] = ee_pos_w
-        start_pos_link0 = quat_apply_inverse(link0_quat_w, ee_pos_w - link0_pos_w)
-        self.pose_start[env_ids, :2] = start_pos_link0[:, :2]
-        self.pose_start[env_ids, 2] = ee_pos_w[:, 2]
+        fixed_start_pos = getattr(self.cfg, "trajectory_start_pos", None)
+        if fixed_start_pos is None:
+            self.pose_start_pos_w[env_ids] = ee_pos_w
+            start_pos_link0 = quat_apply_inverse(link0_quat_w, ee_pos_w - link0_pos_w)
+            self.pose_start[env_ids, :2] = start_pos_link0[:, :2]
+            self.pose_start[env_ids, 2] = ee_pos_w[:, 2]
+        else:
+            # Keep the complete trajectory on a fixed line in front of the
+            # robot instead of joining it diagonally from the current tool
+            # position. X/Y are link0-relative and Z follows the target's
+            # existing world-frame convention.
+            fixed_start = torch.tensor(fixed_start_pos, device=self.device, dtype=ee_pos_w.dtype)
+            fixed_start = fixed_start.unsqueeze(0).expand(len(env_ids), -1)
+            start_xy_w = link0_pos_w + quat_apply(
+                link0_quat_w,
+                torch.cat((fixed_start[:, :2], torch.zeros_like(fixed_start[:, 2:3])), dim=-1),
+            )
+            self.pose_start[env_ids, :3] = fixed_start
+            self.pose_start_pos_w[env_ids, :2] = start_xy_w[:, :2]
+            self.pose_start_pos_w[env_ids, 2] = fixed_start[:, 2]
+
         self.pose_start[env_ids, 3:] = quat_mul(quat_conjugate(link0_quat_w), ee_quat_w)
 
     def _sample_trajectory_waypoints(self, env_ids: torch.Tensor):

@@ -36,6 +36,17 @@ gym.register(
 )
 
 
+gym.register(
+    id="Unitree-b2z1-Gun-Legacy-Play",
+    entry_point="b2_z1.envs:B2Z1ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.b2_z1_gun_legacy_env_cfg:B2Z1GunLegacyPlayEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:PPORunnerCfg",
+    },
+)
+
+
 ## AMP 
 
 gym.register(
@@ -55,6 +66,17 @@ gym.register(
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": f"{__name__}.b2_z1_amp_env_cfg:B2Z1AMPEnvCfg_Play",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_amp_cfg:AMP_PPORunnerCfg",
+    },
+)
+
+
+gym.register(
+    id="Unitree-b2z1-AMP-Gun-Play",
+    entry_point="b2_z1.envs:B2Z1ManagerAMPBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.b2_z1_amp_env_cfg:B2Z1AMPGunEnvCfg_Play",
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_amp_cfg:AMP_PPORunnerCfg",
     },
 )

@@ -26,9 +26,12 @@ MOTION_FILES = glob.glob(os.path.join(_PROJECT_ROOT, "datasets", "b2_motion", "*
 @configclass
 class AMP_PPORunnerCfg(AMP_RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 24
-    max_iterations = 20000
+    # Keep the local training budget while using the latest amp_loco code.
+    max_iterations = 8000
     save_interval = 100
     experiment_name = "b2_z1_amp"  # same as task name
+    # Match the raw policy-action clamp used by the MuJoCo deployment.
+    clip_actions = 5.0
     empirical_normalization = False
     policy = AMP_RslRlPpoActorCriticCfg(
         init_noise_std=1.0,

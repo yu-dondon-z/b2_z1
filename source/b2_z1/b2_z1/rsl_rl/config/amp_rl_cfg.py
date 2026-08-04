@@ -48,7 +48,7 @@ class AMP_AlgorithmCfg:
 
     amp_task_reward_lerp: float = 0.8
     
-    amp_num_preload_transitions: int = 2000000
+    amp_num_preload_transitions: int = 20000
     
     min_normalized_std: list[float] = [0.01, 0.01, 0.01] * 4
     

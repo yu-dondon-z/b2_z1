@@ -52,6 +52,14 @@ class UniformPoseWBCCommandCfg(UniformPoseCommandBaseCfg):
     """Minimum distance in meters between two recorded end-effector trajectory markers."""
     trajectory_waypoint_offset_range_m: tuple[float, float] = (0.1, 0.2)
     """Waypoint offset distance range in meters used to bend the interpolated trajectory."""
+    trajectory_start_pos: tuple[float, float, float] | None = None
+    """Optional fixed trajectory start ``(x, y, z)``.
+
+    The ``x`` and ``y`` coordinates are expressed in ``link_name`` frame,
+    while ``z`` is expressed in world frame, matching the pose target
+    convention. When unset, the trajectory starts at the current end-effector
+    position.
+    """
     
     tracking_pose_visualizer_cfg = _build_tracking_pose_visualizer_cfg()
     interpolation_curve_visualizer_cfg = _build_interpolation_curve_visualizer_cfg()
@@ -70,13 +78,3 @@ class UniformVelocityCommandCfg(UniformVelocityCommandBaseCfg):
     limit_ranges: UniformVelocityCommandBaseCfg.Ranges = None  # type: ignore
     """The range limit """
     curriculum_enabled: bool = False
-    
-
-
-
-
-    
-    
-    
-    
-    

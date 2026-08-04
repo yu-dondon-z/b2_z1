@@ -30,7 +30,7 @@ from . import mdp
 # Pre-defined configs
 ##
 
-from b2_z1.assets.unitree import B2_Z1_GUN_CFG
+from b2_z1.assets.unitree import B2_Z1_NO_STICK_CFG
 # from b2_z1.assets.unitree import B2_Z1_CFG
 
 
@@ -61,7 +61,7 @@ class B2Z1SceneCfg(InteractiveSceneCfg):
 
     # robot
     # robot: ArticulationCfg = B2_Z1_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-    robot: ArticulationCfg = B2_Z1_GUN_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+    robot: ArticulationCfg = B2_Z1_NO_STICK_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
     
     contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=3, 
                                       track_air_time=True, debug_vis=False)
@@ -766,7 +766,3 @@ class B2Z1PlayEnvCfg(B2Z1EnvCfg):
         self.commands.ee_target.limit_ranges.pos_y = (-5.0, 5.0)
         self.commands.ee_target.limit_ranges.pos_z = (0.0, 0.02)
         self.commands.ee_target.ranges = self.commands.ee_target.limit_ranges
-        
-        
-        
-        

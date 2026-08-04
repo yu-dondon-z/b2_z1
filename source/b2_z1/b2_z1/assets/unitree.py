@@ -101,9 +101,9 @@ class UnitreeUrdfFileCfg(sim_utils.UrdfFileCfg):
 """ Configuration for the Unitree robots."""
 
 
-B2_Z1_GUN_CFG = UnitreeArticulationCfg(
+B2_Z1_NO_STICK_CFG = UnitreeArticulationCfg(
     spawn=UnitreeUrdfFileCfg(
-        asset_path=f"{B2Z1_ASSETS_DIR}/b2_z1_gun.urdf",
+        asset_path=f"{B2Z1_ASSETS_DIR}/b2_z1_no_stick.urdf",
         self_collision=False,
     ),
     
@@ -187,4 +187,71 @@ B2_Z1_GUN_CFG = UnitreeArticulationCfg(
     },
 )
 
+# Welding-gun model with the modern arm pose and actuator gains used by the
+# trajectory-tracking AMP run (2026-07-27_09-37-42).
+B2_Z1_GUN_CFG = B2_Z1_NO_STICK_CFG.replace(
+    spawn=UnitreeUrdfFileCfg(
+        asset_path=f"{B2Z1_ASSETS_DIR}/b2_z1_gun.urdf",
+        self_collision=False,
+    )
+)
 
+
+# Dedicated articulation matching the original June welding-gun PPO runs.
+B2_Z1_GUN_LEGACY_CFG = UnitreeArticulationCfg(
+    spawn=UnitreeUrdfFileCfg(
+        asset_path=f"{B2Z1_ASSETS_DIR}/b2_z1_gun.urdf",
+        self_collision=False,
+    ),
+    init_state=ArticulationCfg.InitialStateCfg(
+        pos=(0.0, 0.0, 0.7),
+        joint_pos={
+            ".*R_hip_joint": -0.1,
+            ".*L_hip_joint": 0.1,
+            "F[L,R]_thigh_joint": 0.8,
+            "R[L,R]_thigh_joint": 1.0,
+            ".*_calf_joint": -1.5,
+            "joint1": 0.0,
+            "joint2": 0.1,
+            "joint3": -0.1,
+            "joint4": 0.0,
+            "joint5": 0.0,
+            "joint6": 0.0,
+        },
+        joint_vel={".*": 0.0},
+    ),
+    actuators={
+        "M107-24-2": DelayedPDActuatorCfg(
+            joint_names_expr=[".*_hip_.*", ".*_thigh_.*"],
+            effort_limit_sim=200,
+            velocity_limit_sim=23,
+            stiffness=160.0,
+            damping=5.0,
+            friction=0.01,
+        ),
+        "2": DelayedPDActuatorCfg(
+            joint_names_expr=[".*_calf_.*"],
+            effort_limit_sim=320,
+            velocity_limit_sim=14,
+            stiffness=160.0,
+            damping=5.0,
+            friction=0.01,
+        ),
+        "z1_motor1": ImplicitActuatorCfg(
+            joint_names_expr=["joint1", "joint3", "joint4", "joint5", "joint6"],
+            stiffness=60.0,
+            damping=1.0,
+            friction=0.01,
+            effort_limit_sim=30.0,
+            velocity_limit_sim=3.1415,
+        ),
+        "z1_motor2": ImplicitActuatorCfg(
+            joint_names_expr=["joint2"],
+            stiffness=60.0,
+            damping=1.0,
+            friction=0.01,
+            effort_limit_sim=60.0,
+            velocity_limit_sim=3.1415,
+        ),
+    },
+)
