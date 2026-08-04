@@ -22,8 +22,13 @@ Joint penalties.
 """
 
 def smoothness(env: ManagerBasedRLEnv) -> torch.Tensor:
-    """Penalize the rate of change of the actions using L2 squared kernel."""
-    return torch.sum(torch.square(env.action_manager.action - env.action_manager.action*2 + env.pre_pre_action), dim=1)
+    """Penalize the second finite difference of actions using an L2 kernel."""
+    current_action = env.action_manager.action
+    previous_action = env.action_manager.prev_action
+    return torch.sum(
+        torch.square(current_action - 2.0 * previous_action + env.pre_pre_action),
+        dim=1,
+    )
 
 def power_penalty(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
     """Penalize power consumption of the robot."""
@@ -609,6 +614,7 @@ def swing_leg_height_reward(
     target_height: float = 0.15,
     velocity_threshold: float = 0.1,
     std: float = 0.1,
+    include_body_velocity: bool = True,
 ) -> torch.Tensor:
     """Reward feet clearance during swing phase - encourages lifting legs when moving.
     
@@ -661,12 +667,9 @@ def swing_leg_height_reward(
     cmd = torch.linalg.norm(env.command_manager.get_command("base_velocity"), dim=1)
     # is_still = cmd <= velocity_threshold
     
-    body_vel = torch.linalg.norm(asset.data.root_lin_vel_b[:, :2], dim=1)
+    commanded_move = cmd > velocity_threshold
+    if include_body_velocity:
+        body_vel = torch.linalg.norm(asset.data.root_lin_vel_b[:, :2], dim=1)
+        commanded_move = torch.logical_or(commanded_move, body_vel > velocity_threshold)
+    return torch.where(commanded_move, reward, torch.zeros_like(reward))
     
-    # If the robot is moving (cmd > velocity_threshold or body_vel > velocity_threshold), apply the reward.
-    body_move = torch.logical_or(cmd > velocity_threshold, body_vel > velocity_threshold)   
-    # body_move = cmd >= velocity_threshold
-    return torch.where(body_move, reward, torch.zeros_like(reward))
-    
-
-

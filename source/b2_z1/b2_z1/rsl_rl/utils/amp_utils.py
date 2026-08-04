@@ -38,6 +38,27 @@ class RunningMeanStd(object):
         self.var = new_var
         self.count = new_count
 
+    def state_dict(self) -> dict:
+        """Return a serializable snapshot of the running statistics."""
+        return {
+            "mean": self.mean.copy(),
+            "var": self.var.copy(),
+            "count": self.count,
+        }
+
+    def load_state_dict(self, state_dict: dict) -> None:
+        """Restore running statistics from :meth:`state_dict`."""
+        mean = np.asarray(state_dict["mean"], dtype=np.float64)
+        var = np.asarray(state_dict["var"], dtype=np.float64)
+        if mean.shape != self.mean.shape or var.shape != self.var.shape:
+            raise ValueError(
+                "AMP normalizer shape mismatch: "
+                f"checkpoint mean/var {mean.shape}/{var.shape}, expected {self.mean.shape}/{self.var.shape}."
+            )
+        self.mean = mean.copy()
+        self.var = var.copy()
+        self.count = float(state_dict["count"])
+
 
 class Normalizer(RunningMeanStd):
     def __init__(self, input_dim, epsilon=1e-4, clip_obs=10.0):
@@ -67,6 +88,16 @@ class Normalizer(RunningMeanStd):
         for expert_batch, policy_batch in zip(expert_data_generator, policy_data_generator):
             self.update(
                 torch.vstack(tuple(policy_batch) + tuple(expert_batch)).cpu().numpy())
+
+    def state_dict(self) -> dict:
+        state = super().state_dict()
+        state.update({"epsilon": self.epsilon, "clip_obs": self.clip_obs})
+        return state
+
+    def load_state_dict(self, state_dict: dict) -> None:
+        super().load_state_dict(state_dict)
+        self.epsilon = float(state_dict.get("epsilon", self.epsilon))
+        self.clip_obs = float(state_dict.get("clip_obs", self.clip_obs))
 
 def quaternion_slerp(q0, q1, fraction, spin=0, shortestpath=True):
     """Batch quaternion spherical linear interpolation."""

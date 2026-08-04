@@ -61,6 +61,17 @@ gym.register(
 
 
 gym.register(
+    id="Unitree-b2z1-AMP-Deployment-Finetune",
+    entry_point="b2_z1.envs:B2Z1ManagerAMPBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.b2_z1_amp_env_cfg:B2Z1AMPDeploymentFineTuneEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_amp_cfg:AMPDeploymentFineTuneRunnerCfg",
+    },
+)
+
+
+gym.register(
     id="Unitree-b2z1-AMP-Play",
     entry_point="b2_z1.envs:B2Z1ManagerAMPBasedRLEnv",
     disable_env_checker=True,

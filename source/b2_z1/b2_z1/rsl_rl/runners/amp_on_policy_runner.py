@@ -473,6 +473,8 @@ class AMP_OnPolicyRunner:
         # -- Save model
         saved_dict = {
             "model_state_dict": self.alg.policy.state_dict(),
+            "amp_discriminator_state_dict": self.alg.discriminator.state_dict(),
+            "amp_normalizer_state_dict": self.alg.amp_normalizer.state_dict(),
             "optimizer_state_dict": self.alg.optimizer.state_dict(),
             "iter": self.current_learning_iteration,
             "infos": infos,
@@ -497,6 +499,22 @@ class AMP_OnPolicyRunner:
         loaded_dict = torch.load(path, weights_only=False)
         # -- Load model
         resumed_training = self.alg.policy.load_state_dict(loaded_dict["model_state_dict"])
+        # Legacy AMP checkpoints only contained the policy and the joint
+        # policy/discriminator optimizer. Loading that optimizer into a newly
+        # initialized discriminator is inconsistent, so only restore it when
+        # the discriminator itself is present in the checkpoint.
+        has_amp_training_state = (
+            "amp_discriminator_state_dict" in loaded_dict
+            and "amp_normalizer_state_dict" in loaded_dict
+        )
+        if has_amp_training_state:
+            self.alg.discriminator.load_state_dict(loaded_dict["amp_discriminator_state_dict"])
+            self.alg.amp_normalizer.load_state_dict(loaded_dict["amp_normalizer_state_dict"])
+        else:
+            print(
+                "[WARNING] Legacy AMP checkpoint has no discriminator/normalizer state. "
+                "They will be initialized from scratch and the old optimizer state will not be loaded."
+            )
         # -- Load RND model if used
         if self.alg.rnd:
             self.alg.rnd.load_state_dict(loaded_dict["rnd_state_dict"])
@@ -513,7 +531,7 @@ class AMP_OnPolicyRunner:
                 # is not loaded, as the observation space could differ from the previous rl training.
                 self.privileged_obs_normalizer.load_state_dict(loaded_dict["obs_norm_state_dict"])
         # -- load optimizer if used
-        if load_optimizer and resumed_training:
+        if load_optimizer and resumed_training and has_amp_training_state:
             # -- algorithm optimizer
             self.alg.optimizer.load_state_dict(loaded_dict["optimizer_state_dict"])
             # -- RND optimizer if used
@@ -522,7 +540,7 @@ class AMP_OnPolicyRunner:
         # -- load current learning iteration
         if resumed_training:
             self.current_learning_iteration = loaded_dict["iter"]
-        return loaded_dict["infos"]
+        return loaded_dict.get("infos")
 
     def get_inference_policy(self, device=None):
         self.eval_mode()  # switch to evaluation mode (dropout for example)

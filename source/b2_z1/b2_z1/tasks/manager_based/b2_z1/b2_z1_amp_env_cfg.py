@@ -866,7 +866,118 @@ class B2Z1AMPEnvCfg(ManagerBasedRLEnvCfg):
         
         
         
-                 
+
+@configclass
+class DeploymentFineTuneRewardsCfg(RewardsCfg):
+    """Extra rewards for stand-to-walk transitions and sustained deployment."""
+
+    feet_height = RewTerm(
+        func=mdp.swing_leg_height_reward,
+        weight=0.25,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
+            "asset_cfg": SceneEntityCfg("robot", body_names=".*_foot"),
+            "target_height": 0.10,
+            "velocity_threshold": 0.05,
+            "std": 0.04,
+            # Sliding while a zero command is active must not be interpreted
+            # as locomotion and rewarded with another swing motion.
+            "include_body_velocity": False,
+        },
+    )
+    stand_still_contact = RewTerm(
+        func=mdp.stand_still_contact_reward,
+        weight=1.0,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
+            "velocity_threshold": 0.08,
+            "contact_force_threshold": 5.0,
+            "target_contacts": 4,
+        },
+    )
+    stand_still_air = RewTerm(
+        func=mdp.stand_still_feet_air_penalty,
+        weight=-2.0,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
+            "velocity_threshold": 0.08,
+            "max_air_time": 0.10,
+        },
+    )
+    stand_still_joint_deviation = RewTerm(
+        func=mdp.joint_position_penalty,
+        weight=-0.05,
+        params={
+            "asset_cfg": SceneEntityCfg("robot", joint_names=B2_JOINT_NAMES),
+            "stand_still_scale": 10.0,
+            "velocity_threshold": 0.08,
+        },
+    )
+
+
+@configclass
+class B2Z1AMPDeploymentFineTuneEnvCfg(B2Z1AMPEnvCfg):
+    """Fine-tuning setup matching long-running MuJoCo deployment conditions."""
+
+    rewards: DeploymentFineTuneRewardsCfg = DeploymentFineTuneRewardsCfg()
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        # Twenty-second episodes hid the delayed oscillation seen after about
+        # one minute in MuJoCo.
+        self.episode_length_s = 60.0
+
+        # Most resets now start from the nominal pose. This teaches policy
+        # takeover instead of assuming every episode begins inside a gait.
+        self.reference_state_initialization_prob = 0.25
+        self.events.reset_base.params["pose_range"].update(
+            {"roll": (-0.05, 0.05), "pitch": (-0.05, 0.05)}
+        )
+        self.events.reset_base.params["velocity_range"].update(
+            {
+                "x": (-0.05, 0.05),
+                "y": (-0.05, 0.05),
+                "z": (-0.03, 0.03),
+                "roll": (-0.10, 0.10),
+                "pitch": (-0.10, 0.10),
+                "yaw": (-0.08, 0.08),
+            }
+        )
+        self.events.reset_robot_joints.params["velocity_range"] = (-0.10, 0.10)
+
+        # Resampling creates repeated stop/start transitions during an episode.
+        self.commands.base_velocity.rel_standing_envs = 0.20
+        self.commands.base_velocity.resampling_time_range = (6.0, 10.0)
+        self.commands.base_velocity.curriculum_enabled = False
+        self.commands.base_velocity.ranges.lin_vel_x = (-0.6, 0.6)
+        self.commands.base_velocity.ranges.lin_vel_y = (-0.6, 0.6)
+        self.commands.base_velocity.ranges.ang_vel_z = (-0.5, 0.5)
+        self.commands.base_velocity.limit_ranges.lin_vel_x = (-0.6, 0.6)
+        self.commands.base_velocity.limit_ranges.lin_vel_y = (-0.6, 0.6)
+        self.commands.base_velocity.limit_ranges.ang_vel_z = (-0.5, 0.5)
+
+        # Preserve domain randomization, but make pushes representative of
+        # deployment disturbances rather than dominant training events.
+        self.events.push_robot.interval_range_s = (8.0, 12.0)
+        self.events.push_robot.params["velocity_range"] = {
+            "x": (-0.25, 0.25),
+            "y": (-0.35, 0.35),
+            "roll": (-0.20, 0.20),
+            "pitch": (-0.15, 0.15),
+            "yaw": (-0.15, 0.15),
+        }
+
+        # Reduce high-frequency leg and arm motion without suppressing the
+        # desired 10 cm swing-foot clearance.
+        self.rewards.feet_air_time.weight = 0.50
+        self.rewards.action_rate_l2.weight = -0.02
+        self.rewards.action_smoothness.weight = -0.02
+        self.rewards.dof_acc_l2.weight = -1.0e-6
+        self.rewards.ee_stability.weight = -0.20
+        self.rewards.base_angular_velocity.weight = -0.75
+
+
 @configclass
 class B2Z1AMPEnvCfg_Play(B2Z1AMPEnvCfg):
     def __post_init__(self):

@@ -60,3 +60,37 @@ class AMP_PPORunnerCfg(AMP_RslRlOnPolicyRunnerCfg):
         
         min_normalized_std=[0.01, 0.01, 0.01] * 6
     )
+
+
+@configclass
+class AMPDeploymentFineTuneRunnerCfg(AMP_PPORunnerCfg):
+    """Conservative optimizer settings for deployment-oriented fine-tuning."""
+
+    # ``runner.learn`` interprets this as additional iterations after loading
+    # a checkpoint. model_11998 therefore finishes near model_15998.
+    max_iterations = 4000
+    save_interval = 100
+    experiment_name = "b2_z1_amp"
+    algorithm = AMP_RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.2,
+        entropy_coef=0.005,
+        num_learning_epochs=5,
+        num_mini_batches=4,
+        learning_rate=2.0e-4,
+        schedule="adaptive",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.01,
+        max_grad_norm=1.0,
+    )
+    amp_cfg = AMP_AlgorithmCfg(
+        amp_motion_files=MOTION_FILES,
+        amp_reward_coef=0.2,
+        # The legacy checkpoint has no discriminator state. Initially favor
+        # the known task reward while the new discriminator is learning.
+        amp_task_reward_lerp=0.9,
+        amp_num_preload_transitions=20000,
+        min_normalized_std=[0.01, 0.01, 0.01] * 6,
+    )
