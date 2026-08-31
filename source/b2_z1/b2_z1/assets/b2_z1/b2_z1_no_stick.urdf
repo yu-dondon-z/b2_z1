@@ -903,7 +903,9 @@
   <joint name="joint0" type="fixed" dont_collapse="true">
       <parent link="base_link" />
       <child link="link00" />
-      <origin xyz="0 0 0.09" rpy="0 0 0" />
+      <!-- Rotate the complete Z1 installation 180 degrees so its working
+           direction and TCP workspace are behind B2. -->
+      <origin xyz="0 0 0.09" rpy="0 0 3.14159265" />
 
       <!-- rot 90 deg -->
       <!-- <origin xyz="0 0 0.09" rpy="0 0 1.5708" /> -->

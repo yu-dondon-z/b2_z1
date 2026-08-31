@@ -1,0 +1,128 @@
+# Rear-facing Z1 and visual trajectory WBC
+
+This version rotates the Z1 installation 180 degrees and keeps crack
+perception outside the policy network. The policy observation remains 70-D:
+the existing 7-D end-effector command is now generated from a visual path.
+
+## Control flow
+
+```text
+front RGB-D / front-down D435i
+  -> bounded RGB-D file bridge (image + depth + calibration metadata)
+  -> RHACrackNet segmentation and 3-D crack waypoints in b2_base
+  -> bridge/latest_trajectory.json
+  -> transform new points into world and cache them
+  -> follow fresh forward path tangent with B2
+  -> wait until cached crack enters x=[-1.0, -0.55] m behind B2
+  -> command rear-facing Z1 TCP to that point (+0.10 m tool height)
+  -> rear RGB-D checks the tool/crack area
+```
+
+The velocity command is derived from the forward path tangent. It is not
+derived from the vector to the rear tool target, which would make B2 walk
+backward.
+
+The add-on D435i is provisionally mounted at `(x, y, z) = (0.48, 0.0, 0.34)`
+metres in `base_link` and pitched about 45 degrees toward the road. This needs
+a short front/top bracket; its final transform must come from hand-eye
+calibration rather than these nominal CAD values.
+
+## Tasks
+
+- `Unitree-b2z1-AMP-Rear-Synthetic`: no RTX cameras; generates curved rear
+  targets and forward tangents for efficient policy training.
+- `Unitree-b2z1-AMP-Rear-Vision-Play`: one environment with front/rear RGB,
+  front/rear depth, and optional D435i RGB-D. Reads RHACrackNet JSON.
+
+The visual task exchanges data in this directory by default:
+
+```text
+/tmp/b2_z1_vision_bridge
+```
+
+Override it without editing code:
+
+```bash
+export B2_Z1_VISION_EXCHANGE=/absolute/path/to/shared_directory
+# Optional if the result JSON is stored somewhere else:
+export B2_Z1_VISION_TRAJECTORY=/absolute/path/to/latest_trajectory.json
+```
+
+During visual playback the WBC side publishes `latest_frame.json` as the
+atomic commit marker. It names one of four RGB/depth ring-buffer slots and
+contains the 3x3 intrinsics plus the ROS optical camera pose in `base_link`.
+The external RHACrackNet process should read that metadata, segment the named
+RGB image, use the named uint16 millimetre depth image to back-project pixels,
+transform the points with `camera_position_b` and
+`camera_quaternion_b_ros_wxyz`, and atomically replace
+`latest_trajectory.json`.
+
+That external process is included and uses the already trained stage-1
+checkpoint by default:
+
+```bash
+source /home/dong/anaconda3/etc/profile.d/conda.sh
+conda activate crack_vision
+cd /home/dong/b2_z1
+
+python scripts/vision/run_rhacracknet_bridge.py \
+  --exchange-dir /tmp/b2_z1_vision_bridge \
+  --save-overlay
+```
+
+Run it alongside the Isaac Sim visual-play process. If no crack or fewer than
+three valid depth waypoints are found, it deliberately stops refreshing the
+trajectory; the WBC stale timeout then commands zero base velocity.
+Short detections are also rejected unless the 3-D path is at least 0.20 m long
+and spans at least 0.15 m in B2's forward direction. The WBC independently
+rejects a path whose normalized tangent has less than 0.2 forward component.
+
+Expected JSON fields are:
+
+```json
+{
+  "frame_id": "b2_base",
+  "control_waypoints_robot_xyz": [[0.5, 0.0, -0.45], [0.6, 0.0, -0.45]]
+}
+```
+
+Atomic replacement of the JSON file is recommended. If it is absent, invalid,
+or older than 0.5 s, the visual command sets base velocity to zero and holds
+the last tool target.
+
+## Validate camera output
+
+```bash
+source /home/dong/anaconda3/etc/profile.d/conda.sh
+conda activate env_isaaclab
+cd /home/dong/b2_z1
+
+python scripts/vision/check_rear_vision_scene.py \
+  --headless \
+  --device cuda:0 \
+  --rendering_mode performance \
+  --output outputs/rear_vision_camera_check
+```
+
+It saves front/rear RGB PNGs, front/rear uint16 millimetre depth PNGs, and the
+D435i RGB/depth pair.
+
+## Training
+
+The old forward-facing policy is not valid for the changed Z1 kinematics and
+negative-x rear workspace. Start by training or fine-tuning with the synthetic
+task; do not use the five RTX cameras across parallel training environments.
+
+```bash
+source /home/dong/anaconda3/etc/profile.d/conda.sh
+conda activate env_isaaclab
+cd /home/dong/b2_z1
+
+python scripts/rsl_rl/train_amp.py \
+  --task Unitree-b2z1-AMP-Rear-Synthetic \
+  --headless
+```
+
+Before physical deployment, replace all simulated camera intrinsics/extrinsics
+with calibration results and confirm whether the add-on device is D435i or a
+different model called D35i.

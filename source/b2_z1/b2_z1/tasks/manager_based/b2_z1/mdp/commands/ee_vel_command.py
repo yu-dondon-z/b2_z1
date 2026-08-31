@@ -56,6 +56,18 @@ class EEDerivedVelocityCommand(UniformVelocityCommand):
 
     def _update_command(self):
         ee_cmd_term = self.env.command_manager.get_term(self.cfg.ee_command_name)
+        # Rear-facing tool control must follow the forward crack tangent, not
+        # the vector from B2 to a target that is physically behind the base.
+        # Vision/synthetic rear-path command terms expose that tangent-derived
+        # velocity explicitly while preserving the original 3-D observation.
+        path_velocity_b = getattr(ee_cmd_term, "base_velocity_command_b", None)
+        if path_velocity_b is not None:
+            self.vel_command_b[:] = path_velocity_b
+            standing_env_ids = self.is_standing_env.nonzero(as_tuple=False).flatten()
+            if len(standing_env_ids) > 0:
+                self.vel_command_b[standing_env_ids, :] = 0.0
+            return
+
         # tracking_pose_w[:, :3]: current interpolated trajectory point in world frame
         tracking_pos_w = ee_cmd_term.tracking_pose_w[:, :3]
 
@@ -135,4 +147,3 @@ class EEDerivedVelocityCommandCfg(UniformVelocityCommandCfg):
 
     heading_gain: float = 1.0
     """Proportional gain converting heading error (rad) into yaw-rate command."""
-
