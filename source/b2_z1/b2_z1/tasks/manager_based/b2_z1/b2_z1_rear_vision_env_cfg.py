@@ -16,6 +16,14 @@ from .b2_z1_amp_env_cfg import B2Z1AMPEnvCfg, B2Z1SceneCfg, GROUND_MATERIAL_CFG
 
 RGB_WIDTH = 640
 RGB_HEIGHT = 480
+ROAD_HALF_LENGTH_M = 95.0
+ROAD_HALF_WIDTH_M = 95.0
+CRACK_WIDTH_M = 0.02
+CRACK_DEPTH_M = 0.05
+CRACK_CURVE_HALF_LENGTH_M = 20.0
+CRACK_CURVE_AMPLITUDE_M = 0.06
+CRACK_CURVE_WAVELENGTH_M = 20.0
+CRACK_CURVE_SEGMENT_LENGTH_M = 0.25
 
 
 def _camera_model(fx: float, fy: float, clipping_range=(0.07, 6.0)):
@@ -27,13 +35,48 @@ def _camera_model(fx: float, fy: float, clipping_range=(0.07, 6.0)):
     )
 
 
+def _road_half_segment(
+    name: str,
+    center_x: float,
+    length_x: float,
+    crack_center_y: float,
+    left_side: bool,
+) -> AssetBaseCfg:
+    """Create one road half while leaving a 2 cm trench around a local centerline."""
+    half_gap = 0.5 * CRACK_WIDTH_M
+    if left_side:
+        inner_edge_y = crack_center_y + half_gap
+        width_y = ROAD_HALF_WIDTH_M - inner_edge_y
+        center_y = 0.5 * (ROAD_HALF_WIDTH_M + inner_edge_y)
+    else:
+        inner_edge_y = crack_center_y - half_gap
+        width_y = inner_edge_y + ROAD_HALF_WIDTH_M
+        center_y = 0.5 * (-ROAD_HALF_WIDTH_M + inner_edge_y)
+    return AssetBaseCfg(
+        prim_path=f"{{ENV_REGEX_NS}}/{name}",
+        spawn=sim_utils.CuboidCfg(
+            size=(length_x, width_y, CRACK_DEPTH_M),
+            collision_props=sim_utils.CollisionPropertiesCfg(),
+            visual_material=sim_utils.PreviewSurfaceCfg(
+                diffuse_color=(0.42, 0.42, 0.42), roughness=0.95
+            ),
+            physics_material=GROUND_MATERIAL_CFG,
+        ),
+        init_state=AssetBaseCfg.InitialStateCfg(
+            pos=(center_x, center_y, -0.5 * CRACK_DEPTH_M)
+        ),
+        collision_group=-1,
+    )
+
+
 @configclass
 class B2Z1RearVisionSceneCfg(B2Z1SceneCfg):
     """B2 built-in front/rear RGB-D and optional front-down D435i."""
 
     # A real 2 cm-wide, 5 cm-deep trench. The inherited base ground is lowered
-    # so its top is the trench bottom at z=-0.05 m. Two collision-enabled road
-    # slabs meet that bottom while leaving a 0.02 m gap along world X.
+    # so its top is the trench bottom at z=-0.05 m. The central 40 m is split
+    # into short road slabs whose inner edges trace a gentle sinusoid. The
+    # remaining road stays straight and keeps platform edges outside the view.
     terrain = AssetBaseCfg(
         prim_path="/World/ground",
         spawn=sim_utils.CuboidCfg(
@@ -48,32 +91,58 @@ class B2Z1RearVisionSceneCfg(B2Z1SceneCfg):
         collision_group=-1,
     )
 
-    road_left = AssetBaseCfg(
-        prim_path="{ENV_REGEX_NS}/RoadLeft",
-        spawn=sim_utils.CuboidCfg(
-            size=(190.0, 94.99, 0.05),
-            collision_props=sim_utils.CollisionPropertiesCfg(),
-            visual_material=sim_utils.PreviewSurfaceCfg(
-                diffuse_color=(0.42, 0.42, 0.42), roughness=0.95
-            ),
-            physics_material=GROUND_MATERIAL_CFG,
-        ),
-        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.0, 47.505, -0.025)),
-        collision_group=-1,
+    # Straight approach/exit slabs. The sinusoid is exactly y=0 at x=+-20 m,
+    # so these meet the curved section without a lateral discontinuity.
+    _outer_length = ROAD_HALF_LENGTH_M - CRACK_CURVE_HALF_LENGTH_M
+    road_before_left = _road_half_segment(
+        "RoadBeforeLeft", -0.5 * (ROAD_HALF_LENGTH_M + CRACK_CURVE_HALF_LENGTH_M),
+        _outer_length, 0.0, True
     )
-    road_right = AssetBaseCfg(
-        prim_path="{ENV_REGEX_NS}/RoadRight",
-        spawn=sim_utils.CuboidCfg(
-            size=(190.0, 94.99, 0.05),
-            collision_props=sim_utils.CollisionPropertiesCfg(),
-            visual_material=sim_utils.PreviewSurfaceCfg(
-                diffuse_color=(0.42, 0.42, 0.42), roughness=0.95
-            ),
-            physics_material=GROUND_MATERIAL_CFG,
-        ),
-        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.0, -47.505, -0.025)),
-        collision_group=-1,
+    road_before_right = _road_half_segment(
+        "RoadBeforeRight", -0.5 * (ROAD_HALF_LENGTH_M + CRACK_CURVE_HALF_LENGTH_M),
+        _outer_length, 0.0, False
     )
+    road_after_left = _road_half_segment(
+        "RoadAfterLeft", 0.5 * (ROAD_HALF_LENGTH_M + CRACK_CURVE_HALF_LENGTH_M),
+        _outer_length, 0.0, True
+    )
+    road_after_right = _road_half_segment(
+        "RoadAfterRight", 0.5 * (ROAD_HALF_LENGTH_M + CRACK_CURVE_HALF_LENGTH_M),
+        _outer_length, 0.0, False
+    )
+
+    # 0.25 m segments make the physical trench gently wind by +/-6 cm. Each
+    # local cross-section still has exactly 2 cm opening and 5 cm depth.
+    _curve_segment_count = round(2.0 * CRACK_CURVE_HALF_LENGTH_M / CRACK_CURVE_SEGMENT_LENGTH_M)
+    for _segment_index in range(_curve_segment_count):
+        _segment_x = (
+            -CRACK_CURVE_HALF_LENGTH_M
+            + (_segment_index + 0.5) * CRACK_CURVE_SEGMENT_LENGTH_M
+        )
+        _crack_y = CRACK_CURVE_AMPLITUDE_M * math.sin(
+            2.0 * math.pi * _segment_x / CRACK_CURVE_WAVELENGTH_M
+        )
+        locals()[f"road_curve_left_{_segment_index:03d}"] = _road_half_segment(
+            f"RoadCurveLeft{_segment_index:03d}",
+            _segment_x,
+            CRACK_CURVE_SEGMENT_LENGTH_M,
+            _crack_y,
+            True,
+        )
+        locals()[f"road_curve_right_{_segment_index:03d}"] = _road_half_segment(
+            f"RoadCurveRight{_segment_index:03d}",
+            _segment_x,
+            CRACK_CURVE_SEGMENT_LENGTH_M,
+            _crack_y,
+            False,
+        )
+    # configclass treats every remaining class attribute as scene content.
+    # Remove loop temporaries so InteractiveScene only sees actual assets.
+    del _outer_length
+    del _curve_segment_count
+    del _segment_index
+    del _segment_x
+    del _crack_y
 
     # Built-in optical cameras. Their transforms come from joint_f_oc and
     # joint_r_oc in the B2 URDF, expressed directly relative to base_link so
