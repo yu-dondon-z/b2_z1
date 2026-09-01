@@ -295,6 +295,7 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
             self.base_velocity_command_b.zero_()
             self._filtered_path_heading.zero_()
             self._vision_valid[:] = False
+            self._hold_current_tool_pose()
             return
 
         # The current RGB-D path is in the instantaneous B2 frame. Its tangent
@@ -308,6 +309,7 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
             self.base_velocity_command_b.zero_()
             self._filtered_path_heading.zero_()
             self._vision_valid[:] = False
+            self._hold_current_tool_pose()
             return
         # Pure-pursuit correction combines the local crack tangent with the
         # lateral error at a forward look-ahead point. It corrects both yaw
@@ -318,6 +320,7 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
             self.base_velocity_command_b.zero_()
             self._filtered_path_heading.zero_()
             self._vision_valid[:] = False
+            self._hold_current_tool_pose()
             return
         lookahead_index = torch.argmin(
             torch.abs(forward_points[:, 0] - self.cfg.path_lookahead_m)
@@ -354,14 +357,18 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         cached_b = cached_b[keep]
         if len(cached_b) == 0:
             self._vision_valid[:] = False
+            self._hold_current_tool_pose()
             return
 
         rear_min, rear_max = self.cfg.rear_work_x_range_m
         reachable = (cached_b[:, 0] >= rear_min) & (cached_b[:, 0] <= rear_max)
         if not torch.any(reachable):
-            # Continue moving along a fresh path while holding the arm until a
-            # detected point has physically passed into the rear workspace.
+            # Continue moving along a fresh path until a detected point has
+            # physically passed into the rear workspace. Refresh the hold pose
+            # from the actual TCP every step: retaining an old world target
+            # makes that target drift behind the robot while it walks.
             self._vision_valid[:] = False
+            self._hold_current_tool_pose()
             return
         candidates = torch.nonzero(reachable, as_tuple=False).flatten()
         desired_x = 0.5 * (rear_min + rear_max)
@@ -378,6 +385,14 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         exchange_dir = Path(self.cfg.vision_exchange_directory).expanduser()
         exchange_dir.mkdir(parents=True, exist_ok=True)
         fresh = time.monotonic() - self._last_vision_wall_time <= self.cfg.stale_timeout_s
+        base_pos_w = self.robot.data.body_pos_w[0, self.base_idx]
+        base_quat_w = self.robot.data.body_state_w[0, self.base_idx, 3:7]
+        actual_tool_pos_w = self.robot.data.body_pos_w[0, self.body_idx]
+        actual_tool_pos_b = quat_apply_inverse(
+            base_quat_w.unsqueeze(0),
+            (actual_tool_pos_w - base_pos_w).unsqueeze(0),
+        )[0]
+        tool_error_b = self.pose_command[0, :3] - actual_tool_pos_b
         payload = {
             "timestamp_ns": time.time_ns(),
             "source_sequence_consumed": self._last_source_sequence,
@@ -388,6 +403,9 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
             "base_velocity_command_b": self.base_velocity_command_b[0].detach().cpu().tolist(),
             "path_lateral_error_b_m": float(self._path_lateral_error_b[0].item()),
             "tool_target_position_b": self.pose_command[0, :3].detach().cpu().tolist(),
+            "tool_actual_position_b": actual_tool_pos_b.detach().cpu().tolist(),
+            "tool_target_minus_actual_b": tool_error_b.detach().cpu().tolist(),
+            "tool_position_error_m": float(torch.linalg.norm(tool_error_b).item()),
         }
         target = exchange_dir / "latest_controller_status.json"
         temporary = exchange_dir / f".latest_controller_status.{os.getpid()}.tmp.json"
@@ -448,19 +466,26 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         try:
             camera = self.env.scene[self.cfg.vision_camera_name]
             camera_data = camera.data
-            camera_pos_w = camera_data.pos_w[0]
-            camera_quat_w = camera_data.quat_w_ros[0]
             intrinsic = camera_data.intrinsic_matrices[0]
             image_height, image_width = camera_data.image_shape
         except (KeyError, AttributeError, IndexError, TypeError):
             self.camera_frustum_visualizer.set_visibility(False)
             return
 
-        if not torch.all(torch.isfinite(camera_pos_w)) or not torch.all(torch.isfinite(intrinsic)):
+        if camera.cfg.offset.convention != "ros" or not torch.all(torch.isfinite(intrinsic)):
             self.camera_frustum_visualizer.set_visibility(False)
             return
 
-        depth = self.cfg.camera_frustum_depth_m
+        # Derive the camera pose directly from the latest physics-frame base
+        # state. CameraData pose is refreshed at render frequency and can lag
+        # the moving robot, which made the old frustum appear detached.
+        base_pos_w = self.robot.data.body_pos_w[0, self.base_idx]
+        base_quat_w = self.robot.data.body_state_w[0, self.base_idx, 3:7]
+        camera_pos_b = torch.as_tensor(camera.cfg.offset.pos, device=self.device)
+        camera_quat_b = torch.as_tensor(camera.cfg.offset.rot, device=self.device)
+        camera_pos_w = base_pos_w + quat_apply(base_quat_w.unsqueeze(0), camera_pos_b.unsqueeze(0))[0]
+        camera_quat_w = quat_mul(base_quat_w.unsqueeze(0), camera_quat_b.unsqueeze(0))[0]
+
         fx = intrinsic[0, 0].clamp_min(1.0e-6)
         fy = intrinsic[1, 1].clamp_min(1.0e-6)
         cx = intrinsic[0, 2]
@@ -473,11 +498,25 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         )
         # ROS optical coordinates: +x image-right, +y image-down, +z forward.
         corners_c = torch.empty((4, 3), device=self.device)
-        corners_c[:, 0] = (image_corners[:, 0] - cx) * depth / fx
-        corners_c[:, 1] = (image_corners[:, 1] - cy) * depth / fy
-        corners_c[:, 2] = depth
+        corners_c[:, 0] = (image_corners[:, 0] - cx) / fx
+        corners_c[:, 1] = (image_corners[:, 1] - cy) / fy
+        corners_c[:, 2] = 1.0
         camera_quats = camera_quat_w.unsqueeze(0).expand(4, -1)
-        corners_w = camera_pos_w.unsqueeze(0) + quat_apply(camera_quats, corners_c)
+        corner_directions_w = quat_apply(camera_quats, corners_c)
+
+        # Intersect each pinhole boundary ray with the road plane. This draws
+        # the actually visible footprint instead of a rectangle whose lower
+        # corners pass through the ground and whose upper corners float above it.
+        ground_z = self.cfg.camera_frustum_ground_z_m + self.cfg.camera_frustum_ground_offset_m
+        downward = corner_directions_w[:, 2] < -1.0e-5
+        ray_depths = torch.full((4,), self.cfg.camera_frustum_max_depth_m, device=self.device)
+        ray_depths[downward] = (
+            (ground_z - camera_pos_w[2]) / corner_directions_w[downward, 2]
+        ).clamp(
+            min=self.cfg.camera_frustum_min_depth_m,
+            max=self.cfg.camera_frustum_max_depth_m,
+        )
+        corners_w = camera_pos_w.unsqueeze(0) + ray_depths.unsqueeze(1) * corner_directions_w
 
         ray_t = torch.linspace(
             self.cfg.camera_frustum_near_fraction,
@@ -560,7 +599,10 @@ class RearVisionTrajectoryCommandCfg(UniformPoseWBCCommandCfg):
     camera_frustum_visualizer_cfg.markers["sphere"].visual_material = sim_utils.PreviewSurfaceCfg(
         diffuse_color=(0.0, 0.85, 1.0), emissive_color=(0.0, 0.25, 0.35)
     )
-    camera_frustum_depth_m: float = 2.0
+    camera_frustum_min_depth_m: float = 0.08
+    camera_frustum_max_depth_m: float = 6.0
+    camera_frustum_ground_z_m: float = 0.0
+    camera_frustum_ground_offset_m: float = 0.015
     camera_frustum_near_fraction: float = 0.04
     camera_frustum_ray_samples: int = 14
     camera_frustum_edge_samples: int = 12
