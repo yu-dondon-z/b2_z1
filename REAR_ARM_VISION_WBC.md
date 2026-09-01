@@ -33,8 +33,9 @@ calibration rather than these nominal CAD values.
   targets and forward tangents for efficient policy training.
 - `Unitree-b2z1-AMP-Rear-Vision-Play`: one environment with front/rear RGB,
   front/rear depth, and optional D435i RGB-D. It contains a light simulated
-  190 x 190 m visual road and a 5 cm-wide dark crack, then reads RHACrackNet
-  JSON. The underlying physical ground remains 200 x 200 m.
+  two 190 m-long collision road slabs separated by a real 2 cm-wide,
+  5 cm-deep trench, then reads RHACrackNet JSON. The dark 200 x 200 m lower
+  ground forms the trench bottom.
 
 The visual task exchanges data in this directory by default:
 

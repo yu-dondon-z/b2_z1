@@ -11,7 +11,7 @@ from isaaclab.sensors import CameraCfg
 from isaaclab.utils import configclass
 
 from . import mdp
-from .b2_z1_amp_env_cfg import B2Z1AMPEnvCfg, B2Z1SceneCfg
+from .b2_z1_amp_env_cfg import B2Z1AMPEnvCfg, B2Z1SceneCfg, GROUND_MATERIAL_CFG
 
 
 RGB_WIDTH = 640
@@ -31,34 +31,48 @@ def _camera_model(fx: float, fy: float, clipping_range=(0.07, 6.0)):
 class B2Z1RearVisionSceneCfg(B2Z1SceneCfg):
     """B2 built-in front/rear RGB-D and optional front-down D435i."""
 
-    # A light road strip and a narrow dark crack make the visual playback
-    # genuinely observable by the front-down camera.  Both are visual-only:
-    # contact and robot dynamics still come from B2Z1SceneCfg.terrain.
-    road_surface = AssetBaseCfg(
-        prim_path="{ENV_REGEX_NS}/RoadSurface",
+    # A real 2 cm-wide, 5 cm-deep trench. The inherited base ground is lowered
+    # so its top is the trench bottom at z=-0.05 m. Two collision-enabled road
+    # slabs meet that bottom while leaving a 0.02 m gap along world X.
+    terrain = AssetBaseCfg(
+        prim_path="/World/ground",
         spawn=sim_utils.CuboidCfg(
-            # Almost covers the 200 x 200 m physical ground, so neither the
-            # D435i nor RHACrackNet can see a road-material boundary during a
-            # normal playback episode.
-            size=(190.0, 190.0, 0.002),
-            visual_material=sim_utils.PreviewSurfaceCfg(
-                diffuse_color=(0.42, 0.42, 0.42), roughness=0.95
-            ),
-        ),
-        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.0, 0.0, 0.001)),
-    )
-    simulated_crack = AssetBaseCfg(
-        prim_path="{ENV_REGEX_NS}/SimulatedCrack",
-        spawn=sim_utils.CuboidCfg(
-            # Kept wider than a hairline crack so it remains several pixels
-            # wide at the far end of the 640x480 training camera image.
-            size=(190.0, 0.050, 0.006),
+            size=(200.0, 200.0, 0.10),
+            collision_props=sim_utils.CollisionPropertiesCfg(),
             visual_material=sim_utils.PreviewSurfaceCfg(
                 diffuse_color=(0.003, 0.003, 0.003), roughness=1.0
             ),
+            physics_material=GROUND_MATERIAL_CFG,
         ),
-        # A small visual-only lift avoids z-fighting with the road strip.
-        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.0, 0.0, 0.008)),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.0, 0.0, -0.10)),
+        collision_group=-1,
+    )
+
+    road_left = AssetBaseCfg(
+        prim_path="{ENV_REGEX_NS}/RoadLeft",
+        spawn=sim_utils.CuboidCfg(
+            size=(190.0, 94.99, 0.05),
+            collision_props=sim_utils.CollisionPropertiesCfg(),
+            visual_material=sim_utils.PreviewSurfaceCfg(
+                diffuse_color=(0.42, 0.42, 0.42), roughness=0.95
+            ),
+            physics_material=GROUND_MATERIAL_CFG,
+        ),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.0, 47.505, -0.025)),
+        collision_group=-1,
+    )
+    road_right = AssetBaseCfg(
+        prim_path="{ENV_REGEX_NS}/RoadRight",
+        spawn=sim_utils.CuboidCfg(
+            size=(190.0, 94.99, 0.05),
+            collision_props=sim_utils.CollisionPropertiesCfg(),
+            visual_material=sim_utils.PreviewSurfaceCfg(
+                diffuse_color=(0.42, 0.42, 0.42), roughness=0.95
+            ),
+            physics_material=GROUND_MATERIAL_CFG,
+        ),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.0, -47.505, -0.025)),
+        collision_group=-1,
     )
 
     # Built-in optical cameras. Their transforms come from joint_f_oc and
