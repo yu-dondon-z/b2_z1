@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Literal
 
 import torch
 from isaaclab.markers import VisualizationMarkers
-from isaaclab.markers.config import FRAME_MARKER_CFG
+from isaaclab.markers.config import FRAME_MARKER_CFG, SPHERE_MARKER_CFG
 from isaaclab.utils import configclass
 from isaaclab.utils.math import (
     quat_apply,
@@ -44,6 +44,7 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         self.base_velocity_command_b = torch.zeros(self.num_envs, 3, device=self.device)
         self._vision_valid = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         self._last_file_mtime_ns = -1
+        self._last_source_sequence = -1
         self._last_vision_wall_time = -math.inf
         self._cached_path_w = torch.empty((0, 3), device=self.device)
         self._latest_path_b = torch.empty((0, 3), device=self.device)
@@ -102,6 +103,7 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
             self._export_latest_camera_frame()
             self._ingest_latest_vision_file()
             self._update_file_command()
+            self._write_controller_status()
         self.metrics["vision_valid"][:] = self._vision_valid.float()
         self.metrics["cached_path_points"][:] = float(len(self._cached_path_w))
 
@@ -190,6 +192,7 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         base_quat_w = self.robot.data.body_state_w[0, self.base_idx, 3:7]
         points_w = base_pos_w.unsqueeze(0) + quat_apply(base_quat_w.unsqueeze(0).expand(len(points), -1), points)
         self._latest_path_b = points
+        self._last_source_sequence = int(payload.get("source_sequence", -1))
         self._merge_world_points(points_w)
         self._last_file_mtime_ns = stat.st_mtime_ns
         self._last_vision_wall_time = time.monotonic()
@@ -333,16 +336,44 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         self._set_pose_command_b(target_b.unsqueeze(0))
         self._vision_valid[:] = True
 
+    def _write_controller_status(self):
+        """Publish a low-rate diagnostic proving that WBC consumed vision."""
+        if self.env.common_step_counter % self.cfg.controller_status_period_steps != 0:
+            return
+        exchange_dir = Path(self.cfg.vision_exchange_directory).expanduser()
+        exchange_dir.mkdir(parents=True, exist_ok=True)
+        fresh = time.monotonic() - self._last_vision_wall_time <= self.cfg.stale_timeout_s
+        payload = {
+            "timestamp_ns": time.time_ns(),
+            "source_sequence_consumed": self._last_source_sequence,
+            "trajectory_fresh": fresh,
+            "tool_target_active": bool(self._vision_valid[0].item()),
+            "latest_path_points": len(self._latest_path_b),
+            "cached_world_points": len(self._cached_path_w),
+            "base_velocity_command_b": self.base_velocity_command_b[0].detach().cpu().tolist(),
+            "tool_target_position_b": self.pose_command[0, :3].detach().cpu().tolist(),
+        }
+        target = exchange_dir / "latest_controller_status.json"
+        temporary = exchange_dir / f".latest_controller_status.{os.getpid()}.tmp.json"
+        temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        os.replace(temporary, target)
+
     def _set_debug_vis_impl(self, debug_vis: bool):
         if debug_vis:
             if not hasattr(self, "goal_pose_visualizer"):
                 self.goal_pose_visualizer = VisualizationMarkers(self.cfg.goal_pose_visualizer_cfg)
                 self.current_pose_visualizer = VisualizationMarkers(self.cfg.current_pose_visualizer_cfg)
+                self.tool_target_visualizer = VisualizationMarkers(self.cfg.tool_target_visualizer_cfg)
+                self.detected_path_visualizer = VisualizationMarkers(self.cfg.detected_path_visualizer_cfg)
             self.goal_pose_visualizer.set_visibility(True)
             self.current_pose_visualizer.set_visibility(True)
+            self.tool_target_visualizer.set_visibility(True)
+            self.detected_path_visualizer.set_visibility(self.cfg.mode == "file")
         elif hasattr(self, "goal_pose_visualizer"):
             self.goal_pose_visualizer.set_visibility(False)
             self.current_pose_visualizer.set_visibility(False)
+            self.tool_target_visualizer.set_visibility(False)
+            self.detected_path_visualizer.set_visibility(False)
 
     def _debug_vis_callback(self, event):
         if not self.robot.is_initialized:
@@ -350,6 +381,25 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         body_pose_w = self.robot.data.body_state_w[:, self.body_idx]
         self.goal_pose_visualizer.visualize(self.tracking_pose_w[:, :3], self.tracking_pose_w[:, 3:])
         self.current_pose_visualizer.visualize(body_pose_w[:, :3], body_pose_w[:, 3:7])
+        # Large red sphere: commanded extended tool/TCP target.
+        self.tool_target_visualizer.visualize(self.tracking_pose_w[:, :3])
+
+        # Small red spheres: RGB-D crack centerline after projection into the
+        # world frame. Keep the count bounded so debug rendering stays cheap.
+        if self.cfg.mode == "file" and len(self._cached_path_w) > 0:
+            marker_count = min(self.cfg.max_debug_path_markers, len(self._cached_path_w))
+            indices = torch.linspace(
+                0,
+                len(self._cached_path_w) - 1,
+                marker_count,
+                device=self.device,
+            ).long()
+            points_w = self._cached_path_w[indices].clone()
+            points_w[:, 2] += self.cfg.debug_path_height_offset_m
+            self.detected_path_visualizer.set_visibility(True)
+            self.detected_path_visualizer.visualize(points_w)
+        else:
+            self.detected_path_visualizer.set_visibility(False)
 
 
 @configclass
@@ -381,3 +431,14 @@ class RearVisionTrajectoryCommandCfg(UniformPoseWBCCommandCfg):
     synthetic_speed_range_mps: tuple[float, float] = (0.10, 0.60)
     goal_pose_visualizer_cfg = FRAME_MARKER_CFG.replace(prim_path="/Visuals/RearVision/goal_pose")
     current_pose_visualizer_cfg = FRAME_MARKER_CFG.replace(prim_path="/Visuals/RearVision/current_pose")
+    tool_target_visualizer_cfg = SPHERE_MARKER_CFG.replace(
+        prim_path="/Visuals/RearVision/tool_target"
+    )
+    tool_target_visualizer_cfg.markers["sphere"].radius = 0.030
+    detected_path_visualizer_cfg = SPHERE_MARKER_CFG.replace(
+        prim_path="/Visuals/RearVision/detected_path"
+    )
+    detected_path_visualizer_cfg.markers["sphere"].radius = 0.012
+    max_debug_path_markers: int = 128
+    debug_path_height_offset_m: float = 0.012
+    controller_status_period_steps: int = 25

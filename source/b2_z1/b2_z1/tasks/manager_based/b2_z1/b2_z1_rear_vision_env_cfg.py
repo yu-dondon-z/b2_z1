@@ -6,6 +6,7 @@ import math
 import os
 
 import isaaclab.sim as sim_utils
+from isaaclab.assets import AssetBaseCfg
 from isaaclab.sensors import CameraCfg
 from isaaclab.utils import configclass
 
@@ -29,6 +30,33 @@ def _camera_model(fx: float, fy: float, clipping_range=(0.07, 6.0)):
 @configclass
 class B2Z1RearVisionSceneCfg(B2Z1SceneCfg):
     """B2 built-in front/rear RGB-D and optional front-down D435i."""
+
+    # A light road strip and a narrow dark crack make the visual playback
+    # genuinely observable by the front-down camera.  Both are visual-only:
+    # contact and robot dynamics still come from B2Z1SceneCfg.terrain.
+    road_surface = AssetBaseCfg(
+        prim_path="{ENV_REGEX_NS}/RoadSurface",
+        spawn=sim_utils.CuboidCfg(
+            size=(30.0, 8.0, 0.002),
+            visual_material=sim_utils.PreviewSurfaceCfg(
+                diffuse_color=(0.42, 0.42, 0.42), roughness=0.95
+            ),
+        ),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(14.5, 0.0, 0.001)),
+    )
+    simulated_crack = AssetBaseCfg(
+        prim_path="{ENV_REGEX_NS}/SimulatedCrack",
+        spawn=sim_utils.CuboidCfg(
+            # Kept wider than a hairline crack so it remains several pixels
+            # wide at the far end of the 640x480 training camera image.
+            size=(30.0, 0.050, 0.006),
+            visual_material=sim_utils.PreviewSurfaceCfg(
+                diffuse_color=(0.003, 0.003, 0.003), roughness=1.0
+            ),
+        ),
+        # A small visual-only lift avoids z-fighting with the road strip.
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(14.5, 0.0, 0.008)),
+    )
 
     # Built-in optical cameras. Their transforms come from joint_f_oc and
     # joint_r_oc in the B2 URDF, expressed directly relative to base_link so
@@ -164,6 +192,39 @@ class B2Z1RearSyntheticAMPEnvCfg(B2Z1AMPEnvCfg):
 
 
 @configclass
+class B2Z1RearSyntheticAMPEnvCfg_Play(B2Z1RearSyntheticAMPEnvCfg):
+    """Deterministic playback using the synthetic path command from training."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.num_envs = 1
+        self.episode_length_s = 120.0
+        self.commands.ee_target = _rear_command("synthetic", debug_vis=True)
+        self.commands.base_velocity.curriculum_enabled = False
+        self.events.physics_material = None
+        self.events.add_base_mass = None
+        self.events.base_com = None
+        self.events.actuator_gains = None
+        self.events.joint_dynamics = None
+        self.events.base_external_force_torque = None
+        self.events.push_robot = None
+        self.events.reset_base.params["pose_range"] = {
+            "x": (0.0, 0.0),
+            "y": (0.0, 0.0),
+            "roll": (0.0, 0.0),
+            "pitch": (0.0, 0.0),
+            "yaw": (0.0, 0.0),
+        }
+        self.events.reset_base.params["velocity_range"] = {
+            axis: (0.0, 0.0) for axis in ("x", "y", "z", "roll", "pitch", "yaw")
+        }
+        self.events.reset_robot_joints.params["velocity_range"] = (0.0, 0.0)
+        self.reference_state_initialization_prob = 1.0
+        self.terminations.bad_orientation = None
+        self.terminations.base_contact = None
+
+
+@configclass
 class B2Z1RearVisionEnvCfg_Play(B2Z1RearSyntheticAMPEnvCfg):
     """Single-environment RGB-D playback fed by RHACrackNet trajectory JSON."""
 
@@ -182,6 +243,19 @@ class B2Z1RearVisionEnvCfg_Play(B2Z1RearSyntheticAMPEnvCfg):
         self.events.joint_dynamics = None
         self.events.base_external_force_torque = None
         self.events.push_robot = None
+        # The simulated crack is aligned with world +X. Deterministic playback
+        # must therefore start B2 at the origin with zero yaw and velocity.
+        self.events.reset_base.params["pose_range"] = {
+            "x": (0.0, 0.0),
+            "y": (0.0, 0.0),
+            "roll": (0.0, 0.0),
+            "pitch": (0.0, 0.0),
+            "yaw": (0.0, 0.0),
+        }
+        self.events.reset_base.params["velocity_range"] = {
+            axis: (0.0, 0.0) for axis in ("x", "y", "z", "roll", "pitch", "yaw")
+        }
+        self.events.reset_robot_joints.params["velocity_range"] = (0.0, 0.0)
         self.reference_state_initialization_prob = 1.0
         self.terminations.bad_orientation = None
         self.terminations.base_contact = None

@@ -32,7 +32,8 @@ calibration rather than these nominal CAD values.
 - `Unitree-b2z1-AMP-Rear-Synthetic`: no RTX cameras; generates curved rear
   targets and forward tangents for efficient policy training.
 - `Unitree-b2z1-AMP-Rear-Vision-Play`: one environment with front/rear RGB,
-  front/rear depth, and optional D435i RGB-D. Reads RHACrackNet JSON.
+  front/rear depth, and optional D435i RGB-D. It contains a light simulated
+  road and a 2.5 cm-wide dark crack, then reads RHACrackNet JSON.
 
 The visual task exchanges data in this directory by default:
 
@@ -67,8 +68,28 @@ cd /home/dong/b2_z1
 
 python scripts/vision/run_rhacracknet_bridge.py \
   --exchange-dir /tmp/b2_z1_vision_bridge \
-  --save-overlay
+  --save-overlay \
+  --display
 ```
+
+The live OpenCV panel shows, from left to right, the D435i RGB image,
+RHACrackNet mask, and extracted centerline. Press `q` or `Esc` to close it.
+The latest annotated frame is also saved as
+`/tmp/b2_z1_vision_bridge/latest_overlay.png`.
+
+In the Isaac Sim window:
+
+- the large red sphere is the commanded extended tool/TCP target;
+- the small red spheres are the accepted RGB-D crack points in world space;
+- the coordinate frames show commanded and actual tool poses.
+
+No red path points means RHACrackNet has not produced a fresh, geometrically
+valid trajectory; in that state the WBC intentionally commands zero velocity.
+For a text-level check, inspect
+`/tmp/b2_z1_vision_bridge/latest_controller_status.json`: its
+`source_sequence_consumed`, `trajectory_fresh`, velocity command, cached point
+count, and tool target prove whether the controller has consumed the latest
+visual result.
 
 Run it alongside the Isaac Sim visual-play process. If no crack or fewer than
 three valid depth waypoints are found, it deliberately stops refreshing the
@@ -76,6 +97,24 @@ trajectory; the WBC stale timeout then commands zero base velocity.
 Short detections are also rejected unless the 3-D path is at least 0.20 m long
 and spans at least 0.15 m in B2's forward direction. The WBC independently
 rejects a path whose normalized tangent has less than 0.2 forward component.
+
+The Isaac Sim process (run in a second terminal) is:
+
+```bash
+source /home/dong/anaconda3/etc/profile.d/conda.sh
+conda activate env_isaaclab
+cd /home/dong/b2_z1
+
+python scripts/rsl_rl/play_amp.py \
+  --task Unitree-b2z1-AMP-Rear-Vision-Play \
+  --num_envs 1 \
+  --checkpoint logs/rsl_rl/b2_z1_amp/2026-09-01_09-10-14_rear_vision_resume_from_5500/model_7999.pt \
+  --enable_cameras \
+  --real-time
+```
+
+VS Code can start both processes together with the Run and Debug selection
+`后向机械臂+视觉：完整闭环播放（一键启动）`.
 
 Expected JSON fields are:
 

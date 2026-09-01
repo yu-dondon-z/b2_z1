@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime
 import json
+import os
 from pathlib import Path
 import sys
 import time
@@ -36,6 +37,11 @@ def parse_args():
     parser.add_argument("--max-frames", type=int, default=0, help="0 runs until Ctrl-C")
     parser.add_argument("--poll-period", type=float, default=0.01)
     parser.add_argument("--save-overlay", action="store_true")
+    parser.add_argument(
+        "--display",
+        action="store_true",
+        help="show RGB, segmentation mask, and extracted centerline in a live OpenCV window",
+    )
     return parser.parse_args()
 
 
@@ -56,7 +62,9 @@ def quaternion_wxyz_to_matrix(quaternion) -> np.ndarray:
 
 
 def write_json_atomic(path: Path, payload: dict) -> None:
-    temporary = path.with_name(f".{path.name}.tmp")
+    # PID-scoped temporary files keep two accidentally launched bridge
+    # processes from stealing each other's atomic-replace source.
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     temporary.replace(path)
 
@@ -88,108 +96,140 @@ def main() -> None:
     warmed_up = False
     print(f"Watching RGB-D bridge: {metadata_path}")
 
-    while args.max_frames <= 0 or processed < args.max_frames:
-        try:
-            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-            sequence = int(metadata["sequence"])
-        except (FileNotFoundError, OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
-            time.sleep(args.poll_period)
-            continue
-        if sequence == last_sequence:
-            time.sleep(args.poll_period)
-            continue
+    try:
+        while args.max_frames <= 0 or processed < args.max_frames:
+            try:
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                sequence = int(metadata["sequence"])
+            except (FileNotFoundError, OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+                time.sleep(args.poll_period)
+                continue
+            if sequence == last_sequence:
+                time.sleep(args.poll_period)
+                continue
 
-        image = cv2.imread(str(exchange / metadata["rgb_file"]), cv2.IMREAD_COLOR)
-        depth = cv2.imread(str(exchange / metadata["depth_file"]), cv2.IMREAD_UNCHANGED)
-        if image is None or depth is None or depth.ndim != 2 or depth.shape != image.shape[:2]:
-            time.sleep(args.poll_period)
-            continue
-        last_sequence = sequence
-        processed += 1
+            image = cv2.imread(str(exchange / metadata["rgb_file"]), cv2.IMREAD_COLOR)
+            depth = cv2.imread(str(exchange / metadata["depth_file"]), cv2.IMREAD_UNCHANGED)
+            if image is None or depth is None or depth.ndim != 2 or depth.shape != image.shape[:2]:
+                time.sleep(args.poll_period)
+                continue
+            last_sequence = sequence
+            processed += 1
 
-        if not warmed_up:
-            segmenter.warmup(image.shape[0], image.shape[1])
-            warmed_up = True
-        segmentation = segmenter.predict_bgr(image)
-        try:
-            trajectory = extract_centerline(
-                segmentation.mask,
-                centerline_cfg,
-                ((image.shape[1] - 1) / 2.0, float(image.shape[0] - 1)),
-            )
-            intrinsic = np.asarray(metadata["intrinsic_matrix"], dtype=np.float64)
-            camera = PinholeCamera(
-                fx=float(intrinsic[0, 0]),
-                fy=float(intrinsic[1, 1]),
-                cx=float(intrinsic[0, 2]),
-                cy=float(intrinsic[1, 2]),
-            )
-            transform = np.eye(4, dtype=np.float64)
-            transform[:3, :3] = quaternion_wxyz_to_matrix(
-                metadata["camera_quaternion_b_ros_wxyz"]
-            )
-            transform[:3, 3] = np.asarray(metadata["camera_position_b"], dtype=np.float64)
-            depth_cfg = DepthProjectionConfig(
-                scale_m_per_unit=float(metadata.get("depth_unit_m", 0.001)),
-                min_depth_m=0.07,
-                max_depth_m=6.0,
-                sample_radius_px=2,
-                min_valid_samples=3,
-            )
-            points, valid, depths_m = project_pixels_with_depth(
-                trajectory.waypoints_uv, depth, camera, transform, depth_cfg
-            )
-            control = build_metric_trajectory(
-                points, valid, args.spacing_m, args.max_3d_step_m
-            )
-            if len(control) < 3:
-                raise RuntimeError("fewer than three valid 3-D control waypoints")
-            path_length_m = float(np.linalg.norm(np.diff(control, axis=0), axis=1).sum())
-            forward_span_m = float(abs(control[-1, 0] - control[0, 0]))
-            if path_length_m < args.min_path_length_m:
-                raise RuntimeError(
-                    f"3-D path is too short ({path_length_m:.3f} m < {args.min_path_length_m:.3f} m)"
+            if not warmed_up:
+                segmenter.warmup(image.shape[0], image.shape[1])
+                warmed_up = True
+            segmentation = segmenter.predict_bgr(image)
+            mask_bgr = cv2.cvtColor(segmentation.mask, cv2.COLOR_GRAY2BGR)
+            overlay = cv2.addWeighted(image, 0.72, mask_bgr, 0.28, 0.0)
+            status_text = "no valid 3-D trajectory"
+            try:
+                trajectory = extract_centerline(
+                    segmentation.mask,
+                    centerline_cfg,
+                    ((image.shape[1] - 1) / 2.0, float(image.shape[0] - 1)),
                 )
-            if forward_span_m < args.min_forward_span_m:
-                raise RuntimeError(
-                    "3-D path lacks forward extent "
-                    f"({forward_span_m:.3f} m < {args.min_forward_span_m:.3f} m)"
+                intrinsic = np.asarray(metadata["intrinsic_matrix"], dtype=np.float64)
+                camera = PinholeCamera(
+                    fx=float(intrinsic[0, 0]),
+                    fy=float(intrinsic[1, 1]),
+                    cx=float(intrinsic[0, 2]),
+                    cy=float(intrinsic[1, 2]),
                 )
-            payload = {
-                "timestamp": datetime.now().astimezone().isoformat(),
-                "source_sequence": sequence,
-                "frame_id": "b2_base",
-                "camera_name": metadata.get("camera_name", "d435i"),
-                "inference_ms": float(segmentation.inference_ms),
-                "valid_3d_ratio": float(np.mean(valid)) if len(valid) else 0.0,
-                "path_length_m": path_length_m,
-                "forward_span_m": forward_span_m,
-                "waypoints_uv": trajectory.waypoints_uv.tolist(),
-                "waypoint_depth_m": [
-                    float(value) if np.isfinite(value) else None for value in depths_m
-                ],
-                "control_waypoints_robot_xyz": control.tolist(),
-            }
-            write_json_atomic(exchange / "latest_trajectory.json", payload)
-            print(
-                f"frame={sequence} inference={segmentation.inference_ms:.1f} ms "
-                f"valid={payload['valid_3d_ratio']:.2f} control_points={len(control)}"
+                transform = np.eye(4, dtype=np.float64)
+                transform[:3, :3] = quaternion_wxyz_to_matrix(
+                    metadata["camera_quaternion_b_ros_wxyz"]
+                )
+                transform[:3, 3] = np.asarray(metadata["camera_position_b"], dtype=np.float64)
+                depth_cfg = DepthProjectionConfig(
+                    scale_m_per_unit=float(metadata.get("depth_unit_m", 0.001)),
+                    min_depth_m=0.07,
+                    max_depth_m=6.0,
+                    sample_radius_px=2,
+                    min_valid_samples=3,
+                )
+                points, valid, depths_m = project_pixels_with_depth(
+                    trajectory.waypoints_uv, depth, camera, transform, depth_cfg
+                )
+                control = build_metric_trajectory(
+                    points, valid, args.spacing_m, args.max_3d_step_m
+                )
+                if len(control) < 3:
+                    raise RuntimeError("fewer than three valid 3-D control waypoints")
+                path_length_m = float(np.linalg.norm(np.diff(control, axis=0), axis=1).sum())
+                forward_span_m = float(abs(control[-1, 0] - control[0, 0]))
+                if path_length_m < args.min_path_length_m:
+                    raise RuntimeError(
+                        f"3-D path is too short ({path_length_m:.3f} m < {args.min_path_length_m:.3f} m)"
+                    )
+                if forward_span_m < args.min_forward_span_m:
+                    raise RuntimeError(
+                        "3-D path lacks forward extent "
+                        f"({forward_span_m:.3f} m < {args.min_forward_span_m:.3f} m)"
+                    )
+                payload = {
+                    "timestamp": datetime.now().astimezone().isoformat(),
+                    "source_sequence": sequence,
+                    "frame_id": "b2_base",
+                    "camera_name": metadata.get("camera_name", "d435i"),
+                    "inference_ms": float(segmentation.inference_ms),
+                    "valid_3d_ratio": float(np.mean(valid)) if len(valid) else 0.0,
+                    "path_length_m": path_length_m,
+                    "forward_span_m": forward_span_m,
+                    "waypoints_uv": trajectory.waypoints_uv.tolist(),
+                    "waypoint_depth_m": [
+                        float(value) if np.isfinite(value) else None for value in depths_m
+                    ],
+                    "control_waypoints_robot_xyz": control.tolist(),
+                }
+                write_json_atomic(exchange / "latest_trajectory.json", payload)
+                status_text = (
+                    f"VALID: {len(control)} points, span {forward_span_m:.2f} m, "
+                    f"{segmentation.inference_ms:.1f} ms"
+                )
+                print(
+                    f"frame={sequence} inference={segmentation.inference_ms:.1f} ms "
+                    f"valid={payload['valid_3d_ratio']:.2f} control_points={len(control)}"
+                )
+                overlay = draw_trajectory_overlay(image, trajectory)
+            except (KeyError, RuntimeError, TypeError, ValueError) as error:
+                # Remove any previous result so a newly started controller cannot
+                # briefly consume an old path. Missing/stale input is a zero-speed
+                # condition in the WBC command term.
+                (exchange / "latest_trajectory.json").unlink(missing_ok=True)
+                write_json_atomic(
+                    exchange / "latest_vision_status.json",
+                    {"source_sequence": sequence, "valid": False, "reason": str(error)},
+                )
+                status_text = f"INVALID: {error}"
+                print(f"frame={sequence} no valid trajectory: {error}")
+
+            status_color = (40, 220, 40) if status_text.startswith("VALID") else (20, 20, 240)
+            cv2.putText(
+                overlay,
+                status_text,
+                (12, 28),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.58,
+                status_color,
+                2,
+                cv2.LINE_AA,
             )
             if args.save_overlay:
-                overlay = draw_trajectory_overlay(image, trajectory)
-                overlay_tmp = exchange / ".latest_overlay.tmp.png"
-                cv2.imwrite(str(overlay_tmp), overlay)
-                overlay_tmp.replace(exchange / "latest_overlay.png")
-        except (KeyError, RuntimeError, TypeError, ValueError) as error:
-            # Remove any previous result so a newly started controller cannot
-            # briefly consume an old path. Missing/stale input is a zero-speed
-            # condition in the WBC command term.
-            (exchange / "latest_trajectory.json").unlink(missing_ok=True)
-            write_json_atomic(
-                exchange / "latest_vision_status.json",
-                {"source_sequence": sequence, "valid": False, "reason": str(error)},
-            )
-            print(f"frame={sequence} no valid trajectory: {error}")
+                overlay_tmp = exchange / f".latest_overlay.{os.getpid()}.{sequence}.tmp.png"
+                if cv2.imwrite(str(overlay_tmp), overlay):
+                    overlay_tmp.replace(exchange / "latest_overlay.png")
+            if args.display:
+                cv2.putText(image, "D435i RGB", (12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                cv2.putText(mask_bgr, "RHACrackNet mask", (12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                panel = np.hstack((image, mask_bgr, overlay))
+                panel = cv2.resize(panel, (1440, 360), interpolation=cv2.INTER_AREA)
+                cv2.imshow("B2 crack vision: RGB | mask | 3-D validated centerline", panel)
+                if cv2.waitKey(1) & 0xFF in (27, ord("q")):
+                    break
+    finally:
+        if args.display:
+            cv2.destroyAllWindows()
 
 
 if __name__ == "__main__":
