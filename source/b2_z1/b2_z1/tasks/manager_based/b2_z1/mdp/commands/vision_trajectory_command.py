@@ -463,10 +463,10 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         ui = self._viewport_ui
 
         body_pose_w = self.robot.data.body_state_w[:, self.body_idx]
-        # Small red point: commanded extended-tool/TCP target. Small green
-        # point: the current tracked TCP. Frames are intentionally omitted so
-        # they do not obscure the arm or the crack. Red is drawn larger so it
-        # remains visible as a ring when both points coincide.
+        # Red circle: commanded extended-tool/TCP target. Green circle: the
+        # current tracked TCP. Screen-space circles remain round at every view
+        # angle and distance. Red is larger so it remains visible as an outer
+        # ring when both positions coincide.
         tcp_points = torch.cat((self.tracking_pose_w[:, :3], body_pose_w[:, :3]), dim=0)
         tcp_points = tcp_points.detach().cpu().tolist()
 
@@ -487,12 +487,21 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
 
         frustum_starts, frustum_ends, camera_point = self._camera_frustum_geometry()
         with scene:
-            sc.Points(
-                tcp_points,
-                colors=[ui.color("#ff0d0d")] * self.num_envs
-                + [ui.color("#0dff0d")] * self.num_envs,
-                sizes=[14.0] * self.num_envs + [8.0] * self.num_envs,
+            tcp_colors = (
+                [ui.color("#ff0d0d")] * self.num_envs
+                + [ui.color("#0dff0d")] * self.num_envs
             )
+            tcp_radii = [7.0] * self.num_envs + [4.0] * self.num_envs
+            for point, color, radius in zip(tcp_points, tcp_colors, tcp_radii):
+                with sc.Transform(transform=sc.Matrix44.get_translation_matrix(*point)):
+                    with sc.Transform(look_at=sc.Transform.LookAt.CAMERA, scale_to=sc.Space.SCREEN):
+                        sc.Arc(
+                            radius=radius,
+                            begin=0.0,
+                            end=2.0 * math.pi,
+                            tesselation=32,
+                            color=color,
+                        )
             if path_points:
                 sc.Points(
                     path_points,

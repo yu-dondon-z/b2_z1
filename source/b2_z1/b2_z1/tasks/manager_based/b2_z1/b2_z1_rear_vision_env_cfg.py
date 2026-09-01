@@ -21,7 +21,7 @@ ROAD_HALF_WIDTH_M = 95.0
 CRACK_WIDTH_M = 0.02
 CRACK_DEPTH_M = 0.05
 CRACK_CURVE_HALF_LENGTH_M = 20.0
-CRACK_CURVE_AMPLITUDE_M = 0.06
+CRACK_CURVE_AMPLITUDE_M = 0.12
 CRACK_CURVE_WAVELENGTH_M = 20.0
 CRACK_CURVE_SEGMENT_LENGTH_M = 0.25
 
@@ -111,7 +111,7 @@ class B2Z1RearVisionSceneCfg(B2Z1SceneCfg):
         _outer_length, 0.0, False
     )
 
-    # 0.25 m segments make the physical trench gently wind by +/-6 cm. Each
+    # 0.25 m segments make the physical trench gently wind by +/-12 cm. Each
     # local cross-section still has exactly 2 cm opening and 5 cm depth.
     _curve_segment_count = round(2.0 * CRACK_CURVE_HALF_LENGTH_M / CRACK_CURVE_SEGMENT_LENGTH_M)
     for _segment_index in range(_curve_segment_count):
