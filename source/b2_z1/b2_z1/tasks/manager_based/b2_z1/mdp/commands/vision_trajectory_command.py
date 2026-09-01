@@ -563,7 +563,7 @@ class RearVisionTrajectoryCommandCfg(UniformPoseWBCCommandCfg):
     class_type: type = RearVisionTrajectoryCommand
     mode: Literal["synthetic", "file"] = "synthetic"
     trajectory_file: str = ""
-    vision_camera_name: str = "d435i"
+    vision_camera_name: str = "front_depth"
     vision_exchange_directory: str = "/tmp/b2_z1_vision_bridge"
     camera_export_period_steps: int = 3
     camera_ring_slots: int = 4

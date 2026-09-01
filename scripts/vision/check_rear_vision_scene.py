@@ -86,7 +86,10 @@ def main() -> None:
             _save_rgb(output / f"{name}.png", rgb)
             print(f"{name}: rgb={tuple(rgb.shape)}")
         for name in ("front_depth", "rear_depth"):
-            depth = scene[name].data.output["distance_to_image_plane"]
+            camera_output = scene[name].data.output
+            if "rgb" in camera_output:
+                _save_rgb(output / f"{name}_rgb.png", camera_output["rgb"])
+            depth = camera_output["distance_to_image_plane"]
             depth_range = _save_depth(output / f"{name}_mm.png", depth)
             print(f"{name}: depth={tuple(depth.shape)}, valid_range_m={depth_range}")
         d435i = scene["d435i"].data.output

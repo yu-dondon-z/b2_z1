@@ -174,13 +174,15 @@ class B2Z1RearVisionSceneCfg(B2Z1SceneCfg):
         ),
     )
 
-    # Built-in depth cameras are pitched down approximately 45 degrees.
+    # Built-in depth cameras are pitched down approximately 45 degrees. The
+    # forward unit also exposes co-located RGB in simulation so RHACrackNet
+    # receives pixel-aligned RGB-D from the built-in mounting position.
     front_depth = CameraCfg(
         prim_path="{ENV_REGEX_NS}/Robot/base_link/front_depth",
         update_period=1.0 / 15.0,
         width=RGB_WIDTH,
         height=RGB_HEIGHT,
-        data_types=["distance_to_image_plane"],
+        data_types=["rgb", "distance_to_image_plane"],
         depth_clipping_behavior="zero",
         spawn=_camera_model(430.0, 430.0),
         offset=CameraCfg.OffsetCfg(
@@ -231,6 +233,7 @@ class B2Z1RearVisionSceneCfg(B2Z1SceneCfg):
 
 def _rear_command(mode: str, debug_vis: bool):
     exchange_dir = os.environ.get("B2_Z1_VISION_EXCHANGE", "/tmp/b2_z1_vision_bridge")
+    vision_camera_name = os.environ.get("B2_Z1_VISION_CAMERA", "front_depth")
     ranges = mdp.command_cfg.UniformPoseWBCCommandCfg.Ranges(
         pos_x=(-1.0, -0.55),
         pos_y=(-0.15, 0.15),
@@ -251,7 +254,7 @@ def _rear_command(mode: str, debug_vis: bool):
             "B2_Z1_VISION_TRAJECTORY",
             os.path.join(exchange_dir, "latest_trajectory.json"),
         ),
-        vision_camera_name="d435i",
+        vision_camera_name=vision_camera_name,
         vision_exchange_directory=exchange_dir,
         ranges=ranges,
         limit_ranges=ranges,
