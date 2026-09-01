@@ -33,7 +33,8 @@ calibration rather than these nominal CAD values.
   targets and forward tangents for efficient policy training.
 - `Unitree-b2z1-AMP-Rear-Vision-Play`: one environment with front/rear RGB,
   front/rear depth, and optional D435i RGB-D. It contains a light simulated
-  road and a 2.5 cm-wide dark crack, then reads RHACrackNet JSON.
+  190 x 190 m visual road and a 5 cm-wide dark crack, then reads RHACrackNet
+  JSON. The underlying physical ground remains 200 x 200 m.
 
 The visual task exchanges data in this directory by default:
 
@@ -96,7 +97,21 @@ three valid depth waypoints are found, it deliberately stops refreshing the
 trajectory; the WBC stale timeout then commands zero base velocity.
 Short detections are also rejected unless the 3-D path is at least 0.20 m long
 and spans at least 0.15 m in B2's forward direction. The WBC independently
-rejects a path whose normalized tangent has less than 0.2 forward component.
+rejects a path whose normalized tangent has less than 0.65 forward component.
+
+For the current simulated road, the default segmentation threshold is `0.90`
+(the measured true-crack probability is above `0.99`, while uniform road stays
+below `0.69`). A result must also pass mask-area, waypoint-confidence,
+near-field visibility, image-span, valid-depth, path-straightness and forward
+direction checks for three consecutive frames. A rejected/missing result is
+removed immediately; the controller's 0.25 s stale timeout then commands zero
+velocity.
+
+Locomotion uses pure pursuit rather than blindly copying the crack tangent.
+It combines tangent heading with lateral error at a 1 m look-ahead point,
+commands no lateral velocity, rotates in place for heading errors above 0.45
+rad, and only translates once the crack is back inside the recoverable field
+of view.
 
 The Isaac Sim process (run in a second terminal) is:
 
@@ -126,7 +141,7 @@ Expected JSON fields are:
 ```
 
 Atomic replacement of the JSON file is recommended. If it is absent, invalid,
-or older than 0.5 s, the visual command sets base velocity to zero and holds
+or older than 0.25 s, the visual command sets base velocity to zero and holds
 the last tool target.
 
 ## Validate camera output

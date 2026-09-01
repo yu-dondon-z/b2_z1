@@ -37,25 +37,28 @@ class B2Z1RearVisionSceneCfg(B2Z1SceneCfg):
     road_surface = AssetBaseCfg(
         prim_path="{ENV_REGEX_NS}/RoadSurface",
         spawn=sim_utils.CuboidCfg(
-            size=(30.0, 8.0, 0.002),
+            # Almost covers the 200 x 200 m physical ground, so neither the
+            # D435i nor RHACrackNet can see a road-material boundary during a
+            # normal playback episode.
+            size=(190.0, 190.0, 0.002),
             visual_material=sim_utils.PreviewSurfaceCfg(
                 diffuse_color=(0.42, 0.42, 0.42), roughness=0.95
             ),
         ),
-        init_state=AssetBaseCfg.InitialStateCfg(pos=(14.5, 0.0, 0.001)),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.0, 0.0, 0.001)),
     )
     simulated_crack = AssetBaseCfg(
         prim_path="{ENV_REGEX_NS}/SimulatedCrack",
         spawn=sim_utils.CuboidCfg(
             # Kept wider than a hairline crack so it remains several pixels
             # wide at the far end of the 640x480 training camera image.
-            size=(30.0, 0.050, 0.006),
+            size=(190.0, 0.050, 0.006),
             visual_material=sim_utils.PreviewSurfaceCfg(
                 diffuse_color=(0.003, 0.003, 0.003), roughness=1.0
             ),
         ),
         # A small visual-only lift avoids z-fighting with the road strip.
-        init_state=AssetBaseCfg.InitialStateCfg(pos=(14.5, 0.0, 0.008)),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.0, 0.0, 0.008)),
     )
 
     # Built-in optical cameras. Their transforms come from joint_f_oc and
@@ -260,5 +263,10 @@ class B2Z1RearVisionEnvCfg_Play(B2Z1RearSyntheticAMPEnvCfg):
         self.terminations.bad_orientation = None
         self.terminations.base_contact = None
         self.rerender_on_reset = True
-        self.sim.render.antialiasing_mode = "OFF"
+        # The previous OFF/performance combination exposed stochastic RTX
+        # lighting samples as white speckles. DLAA plus the renderer denoiser
+        # produces a stable image for segmentation without changing physics.
+        self.sim.render.antialiasing_mode = "DLAA"
+        self.sim.render.enable_dl_denoiser = True
+        self.sim.render.samples_per_pixel = 4
         self.sim.render_interval = self.decimation

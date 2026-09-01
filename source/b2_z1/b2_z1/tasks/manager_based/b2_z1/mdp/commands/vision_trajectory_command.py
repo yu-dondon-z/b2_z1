@@ -52,6 +52,7 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         self._synthetic_amplitude = torch.zeros(self.num_envs, device=self.device)
         self._synthetic_wavenumber = torch.zeros(self.num_envs, device=self.device)
         self._synthetic_speed = torch.zeros(self.num_envs, device=self.device)
+        self._filtered_path_heading = torch.zeros(self.num_envs, device=self.device)
         self._camera_export_sequence = 0
         self.metrics["vision_valid"] = torch.zeros(self.num_envs, device=self.device)
         self.metrics["cached_path_points"] = torch.zeros(self.num_envs, device=self.device)
@@ -94,6 +95,7 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
             self._latest_path_b = torch.empty((0, 3), device=self.device)
             self._vision_valid[env_ids] = False
         self._hold_current_tool_pose(env_ids)
+        self._filtered_path_heading[env_ids] = 0.0
         self._reset_tracked_trajectory(env_ids)
 
     def _update_command(self):
@@ -288,6 +290,7 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         fresh = time.monotonic() - self._last_vision_wall_time <= self.cfg.stale_timeout_s
         if not fresh or len(self._latest_path_b) < self.cfg.minimum_path_points:
             self.base_velocity_command_b.zero_()
+            self._filtered_path_heading.zero_()
             self._vision_valid[:] = False
             return
 
@@ -300,12 +303,40 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         tangent_b = tangent_b / torch.linalg.norm(tangent_b).clamp_min(1.0e-6)
         if tangent_b[0] < self.cfg.minimum_forward_tangent:
             self.base_velocity_command_b.zero_()
+            self._filtered_path_heading.zero_()
             self._vision_valid[:] = False
             return
-        self.base_velocity_command_b[0, 0] = tangent_b[0] * self.cfg.path_speed_mps
-        self.base_velocity_command_b[0, 1] = tangent_b[1] * self.cfg.path_speed_mps
+        # Pure-pursuit correction combines the local crack tangent with the
+        # lateral error at a forward look-ahead point. It corrects both yaw
+        # and parallel offset; following tangent alone cannot return to a
+        # straight crack after drifting sideways.
+        forward_points = self._latest_path_b[self._latest_path_b[:, 0] > 0.10]
+        if len(forward_points) == 0:
+            self.base_velocity_command_b.zero_()
+            self._filtered_path_heading.zero_()
+            self._vision_valid[:] = False
+            return
+        lookahead_index = torch.argmin(
+            torch.abs(forward_points[:, 0] - self.cfg.path_lookahead_m)
+        )
+        lookahead = forward_points[lookahead_index]
+        tangent_heading = torch.atan2(tangent_b[1], tangent_b[0])
+        cross_track_heading = torch.atan2(
+            self.cfg.cross_track_gain * lookahead[1], lookahead[0].clamp_min(0.10)
+        )
+        raw_heading = (tangent_heading + cross_track_heading).clamp(-1.2, 1.2)
+        alpha = self.cfg.path_heading_filter_alpha
+        self._filtered_path_heading[0] = (
+            (1.0 - alpha) * self._filtered_path_heading[0] + alpha * raw_heading
+        )
+        heading_error = self._filtered_path_heading[0]
+
+        self.base_velocity_command_b.zero_()
+        if torch.abs(heading_error) <= self.cfg.rotate_in_place_heading_rad:
+            speed_scale = torch.cos(heading_error).clamp(0.25, 1.0)
+            self.base_velocity_command_b[0, 0] = self.cfg.path_speed_mps * speed_scale
         self.base_velocity_command_b[0, 2] = (
-            self.cfg.path_heading_gain * torch.atan2(tangent_b[1], tangent_b[0])
+            self.cfg.path_heading_gain * heading_error
         ).clamp(-self.cfg.max_yaw_rate_rps, self.cfg.max_yaw_rate_rps)
 
         base_pos_w = self.robot.data.body_pos_w[0, self.base_idx]
@@ -420,9 +451,13 @@ class RearVisionTrajectoryCommandCfg(UniformPoseWBCCommandCfg):
     path_speed_mps: float = 0.25
     path_heading_gain: float = 1.5
     max_yaw_rate_rps: float = 0.5
-    stale_timeout_s: float = 0.5
+    stale_timeout_s: float = 0.25
     minimum_path_points: int = 3
-    minimum_forward_tangent: float = 0.2
+    minimum_forward_tangent: float = 0.65
+    path_lookahead_m: float = 1.0
+    cross_track_gain: float = 0.8
+    path_heading_filter_alpha: float = 0.25
+    rotate_in_place_heading_rad: float = 0.45
     merge_distance_m: float = 0.03
     max_cached_points: int = 2048
     prune_behind_x_m: float = -2.0
