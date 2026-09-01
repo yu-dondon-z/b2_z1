@@ -170,10 +170,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # reset environment
     obs, _ = env.get_observations()
-    try:
-        camera_safe_debug_term = env.unwrapped.command_manager.get_term("ee_target")
-    except (AttributeError, KeyError):
-        camera_safe_debug_term = None
     timestep = 0
     # simulate environment
     while simulation_app.is_running():
@@ -182,12 +178,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         with torch.inference_mode():
             # agent stepping
             actions = policy(obs)
-            # Viewport-only overlays are cleared before RTX renders the next
-            # RGB-D frame. The command callback redraws them after the step.
-            if camera_safe_debug_term is not None and hasattr(
-                camera_safe_debug_term, "clear_viewport_debug_before_camera_render"
-            ):
-                camera_safe_debug_term.clear_viewport_debug_before_camera_render()
             # env stepping
             obs, _, _, _ = env.step(actions)
         if args_cli.video:

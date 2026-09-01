@@ -411,57 +411,68 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
 
     def _set_debug_vis_impl(self, debug_vis: bool):
         if debug_vis:
-            if not hasattr(self, "_viewport_debug_draw"):
-                # The GUI experience enables this extension by default, while
-                # the headless-rendering experience used by camera checks does
-                # not. Enable and import it lazily after SimulationApp exists.
-                import omni.kit.app
-
-                extension_manager = omni.kit.app.get_app().get_extension_manager()
-                extension_manager.set_extension_enabled_immediate("isaacsim.util.debug_draw", True)
-                from isaacsim.util.debug_draw import _debug_draw
-
-                self._viewport_debug_draw = _debug_draw.acquire_debug_draw_interface()
             self._debug_vis_enabled = True
+            self._ensure_viewport_overlay()
         else:
             self._debug_vis_enabled = False
-            if hasattr(self, "_viewport_debug_draw"):
-                self._viewport_debug_draw.clear_points()
-                self._viewport_debug_draw.clear_lines()
+            self._clear_viewport_overlay()
 
-    def clear_viewport_debug_before_camera_render(self):
-        """Remove overlays before the next RTX sensor render.
+    def _ensure_viewport_overlay(self) -> bool:
+        """Attach a UI SceneView to the main viewport, if a GUI is available.
 
-        The command callback redraws them after physics/rendering, so the user
-        still sees the overlays between policy steps while RGB-D stays clean.
+        Unlike USD prims and ``isaacsim.util.debug_draw``, SceneView elements
+        are composited only into the interactive viewport. They therefore stay
+        visible to the operator without becoming false features in the RGB-D
+        images consumed by the vision pipeline.
         """
-        if hasattr(self, "_viewport_debug_draw"):
-            self._viewport_debug_draw.clear_points()
-            self._viewport_debug_draw.clear_lines()
+        if getattr(self, "_viewport_scene_view", None) is not None:
+            return True
+        try:
+            import omni.ui as ui
+            from omni.ui import scene as sc
+            from omni.kit.viewport.utility import get_active_viewport_window
+
+            viewport_window = get_active_viewport_window()
+            if viewport_window is None:
+                return False
+            with viewport_window.get_frame("b2_z1.rear_vision.overlay"):
+                scene_view = sc.SceneView()
+            viewport_window.viewport_api.add_scene_view(scene_view)
+        except (ImportError, AttributeError, RuntimeError):
+            # Camera validation also runs with a headless SimulationApp. In
+            # that case there is intentionally no viewport overlay to create.
+            return False
+
+        self._viewport_ui = ui
+        self._viewport_scene = sc
+        self._viewport_window = viewport_window
+        self._viewport_scene_view = scene_view
+        return True
+
+    def _clear_viewport_overlay(self):
+        scene_view = getattr(self, "_viewport_scene_view", None)
+        if scene_view is not None:
+            scene_view.scene.clear()
 
     def _debug_vis_callback(self, event):
-        if not self.robot.is_initialized:
+        if not self.robot.is_initialized or not self._ensure_viewport_overlay():
             return
-        self._viewport_debug_draw.clear_points()
-        self._viewport_debug_draw.clear_lines()
+        scene = self._viewport_scene_view.scene
+        scene.clear()
+        sc = self._viewport_scene
+        ui = self._viewport_ui
+
         body_pose_w = self.robot.data.body_state_w[:, self.body_idx]
         # Small red point: commanded extended-tool/TCP target. Small green
         # point: the current tracked TCP. Frames are intentionally omitted so
         # they do not obscure the arm or the crack. Red is drawn larger so it
         # remains visible as a ring when both points coincide.
         tcp_points = torch.cat((self.tracking_pose_w[:, :3], body_pose_w[:, :3]), dim=0)
-        self._viewport_debug_draw.draw_points(
-            tcp_points.detach().cpu().tolist(),
-            [(1.0, 0.05, 0.05, 1.0)] * self.num_envs
-            + [(0.05, 1.0, 0.05, 1.0)] * self.num_envs,
-            [14.0] * self.num_envs + [8.0] * self.num_envs,
-        )
-
-        if self.cfg.mode == "file":
-            self._visualize_camera_frustum()
+        tcp_points = tcp_points.detach().cpu().tolist()
 
         # Small yellow spheres: RGB-D crack centerline after projection into the
         # world frame. Keep the count bounded so debug rendering stays cheap.
+        path_points = []
         if self.cfg.mode == "file" and len(self._cached_path_w) > 0:
             marker_count = min(self.cfg.max_debug_path_markers, len(self._cached_path_w))
             indices = torch.linspace(
@@ -472,24 +483,46 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
             ).long()
             points_w = self._cached_path_w[indices].clone()
             points_w[:, 2] += self.cfg.debug_path_height_offset_m
-            self._viewport_debug_draw.draw_points(
-                points_w.detach().cpu().tolist(),
-                [(1.0, 0.75, 0.0, 1.0)] * marker_count,
-                [5.0] * marker_count,
-            )
+            path_points = points_w.detach().cpu().tolist()
 
-    def _visualize_camera_frustum(self):
-        """Draw a cyan point-wireframe of the active camera's true pinhole FOV."""
+        frustum_starts, frustum_ends, camera_point = self._camera_frustum_geometry()
+        with scene:
+            sc.Points(
+                tcp_points,
+                colors=[ui.color("#ff0d0d")] * self.num_envs
+                + [ui.color("#0dff0d")] * self.num_envs,
+                sizes=[14.0] * self.num_envs + [8.0] * self.num_envs,
+            )
+            if path_points:
+                sc.Points(
+                    path_points,
+                    colors=[ui.color("#ffc000")] * len(path_points),
+                    sizes=[5.0] * len(path_points),
+                )
+            for start, end in zip(frustum_starts, frustum_ends):
+                sc.Line(start, end, color=ui.color("#00d9ff"), thickness=2.0)
+            if camera_point:
+                sc.Points(
+                    [camera_point],
+                    colors=[ui.color("#00d9ff")],
+                    sizes=[10.0],
+                )
+
+    def _camera_frustum_geometry(self):
+        """Return the active camera's cyan pinhole-FOV wireframe geometry."""
+        empty = ([], [], None)
+        if self.cfg.mode != "file":
+            return empty
         try:
             camera = self.env.scene[self.cfg.vision_camera_name]
             camera_data = camera.data
             intrinsic = camera_data.intrinsic_matrices[0]
             image_height, image_width = camera_data.image_shape
         except (KeyError, AttributeError, IndexError, TypeError):
-            return
+            return empty
 
         if camera.cfg.offset.convention != "ros" or not torch.all(torch.isfinite(intrinsic)):
-            return
+            return empty
 
         # Derive the camera pose directly from the latest physics-frame base
         # state. CameraData pose is refreshed at render frequency and can lag
@@ -543,17 +576,7 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
             line_ends.append(corners_w[(index + 1) % 4])
         starts = torch.stack(line_starts).detach().cpu().tolist()
         ends = torch.stack(line_ends).detach().cpu().tolist()
-        self._viewport_debug_draw.draw_lines(
-            starts,
-            ends,
-            [(0.0, 0.85, 1.0, 1.0)] * len(starts),
-            [2.0] * len(starts),
-        )
-        self._viewport_debug_draw.draw_points(
-            [camera_pos_w.detach().cpu().tolist()],
-            [(0.0, 0.85, 1.0, 1.0)],
-            [10.0],
-        )
+        return starts, ends, camera_pos_w.detach().cpu().tolist()
 
 
 @configclass
