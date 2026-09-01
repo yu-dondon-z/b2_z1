@@ -10,9 +10,6 @@ import time
 from typing import TYPE_CHECKING, Literal
 
 import torch
-import isaaclab.sim as sim_utils
-from isaaclab.markers import VisualizationMarkers
-from isaaclab.markers.config import SPHERE_MARKER_CFG
 from isaaclab.utils import configclass
 from isaaclab.utils.math import (
     quat_apply,
@@ -414,32 +411,51 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
 
     def _set_debug_vis_impl(self, debug_vis: bool):
         if debug_vis:
-            if not hasattr(self, "goal_pose_visualizer"):
-                self.goal_pose_visualizer = VisualizationMarkers(self.cfg.goal_pose_visualizer_cfg)
-                self.current_pose_visualizer = VisualizationMarkers(self.cfg.current_pose_visualizer_cfg)
-                self.detected_path_visualizer = VisualizationMarkers(self.cfg.detected_path_visualizer_cfg)
-                self.camera_frustum_visualizer = VisualizationMarkers(
-                    self.cfg.camera_frustum_visualizer_cfg
-                )
-            self.goal_pose_visualizer.set_visibility(True)
-            self.current_pose_visualizer.set_visibility(True)
-            self.detected_path_visualizer.set_visibility(self.cfg.mode == "file")
-            self.camera_frustum_visualizer.set_visibility(self.cfg.mode == "file")
-        elif hasattr(self, "goal_pose_visualizer"):
-            self.goal_pose_visualizer.set_visibility(False)
-            self.current_pose_visualizer.set_visibility(False)
-            self.detected_path_visualizer.set_visibility(False)
-            self.camera_frustum_visualizer.set_visibility(False)
+            if not hasattr(self, "_viewport_debug_draw"):
+                # The GUI experience enables this extension by default, while
+                # the headless-rendering experience used by camera checks does
+                # not. Enable and import it lazily after SimulationApp exists.
+                import omni.kit.app
+
+                extension_manager = omni.kit.app.get_app().get_extension_manager()
+                extension_manager.set_extension_enabled_immediate("isaacsim.util.debug_draw", True)
+                from isaacsim.util.debug_draw import _debug_draw
+
+                self._viewport_debug_draw = _debug_draw.acquire_debug_draw_interface()
+            self._debug_vis_enabled = True
+        else:
+            self._debug_vis_enabled = False
+            if hasattr(self, "_viewport_debug_draw"):
+                self._viewport_debug_draw.clear_points()
+                self._viewport_debug_draw.clear_lines()
+
+    def clear_viewport_debug_before_camera_render(self):
+        """Remove overlays before the next RTX sensor render.
+
+        The command callback redraws them after physics/rendering, so the user
+        still sees the overlays between policy steps while RGB-D stays clean.
+        """
+        if hasattr(self, "_viewport_debug_draw"):
+            self._viewport_debug_draw.clear_points()
+            self._viewport_debug_draw.clear_lines()
 
     def _debug_vis_callback(self, event):
         if not self.robot.is_initialized:
             return
+        self._viewport_debug_draw.clear_points()
+        self._viewport_debug_draw.clear_lines()
         body_pose_w = self.robot.data.body_state_w[:, self.body_idx]
         # Small red point: commanded extended-tool/TCP target. Small green
         # point: the current tracked TCP. Frames are intentionally omitted so
-        # they do not obscure the arm or the crack.
-        self.goal_pose_visualizer.visualize(self.tracking_pose_w[:, :3])
-        self.current_pose_visualizer.visualize(body_pose_w[:, :3])
+        # they do not obscure the arm or the crack. Red is drawn larger so it
+        # remains visible as a ring when both points coincide.
+        tcp_points = torch.cat((self.tracking_pose_w[:, :3], body_pose_w[:, :3]), dim=0)
+        self._viewport_debug_draw.draw_points(
+            tcp_points.detach().cpu().tolist(),
+            [(1.0, 0.05, 0.05, 1.0)] * self.num_envs
+            + [(0.05, 1.0, 0.05, 1.0)] * self.num_envs,
+            [14.0] * self.num_envs + [8.0] * self.num_envs,
+        )
 
         if self.cfg.mode == "file":
             self._visualize_camera_frustum()
@@ -456,10 +472,11 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
             ).long()
             points_w = self._cached_path_w[indices].clone()
             points_w[:, 2] += self.cfg.debug_path_height_offset_m
-            self.detected_path_visualizer.set_visibility(True)
-            self.detected_path_visualizer.visualize(points_w)
-        else:
-            self.detected_path_visualizer.set_visibility(False)
+            self._viewport_debug_draw.draw_points(
+                points_w.detach().cpu().tolist(),
+                [(1.0, 0.75, 0.0, 1.0)] * marker_count,
+                [5.0] * marker_count,
+            )
 
     def _visualize_camera_frustum(self):
         """Draw a cyan point-wireframe of the active camera's true pinhole FOV."""
@@ -469,11 +486,9 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
             intrinsic = camera_data.intrinsic_matrices[0]
             image_height, image_width = camera_data.image_shape
         except (KeyError, AttributeError, IndexError, TypeError):
-            self.camera_frustum_visualizer.set_visibility(False)
             return
 
         if camera.cfg.offset.convention != "ros" or not torch.all(torch.isfinite(intrinsic)):
-            self.camera_frustum_visualizer.set_visibility(False)
             return
 
         # Derive the camera pose directly from the latest physics-frame base
@@ -518,26 +533,27 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         )
         corners_w = camera_pos_w.unsqueeze(0) + ray_depths.unsqueeze(1) * corner_directions_w
 
-        ray_t = torch.linspace(
-            self.cfg.camera_frustum_near_fraction,
-            1.0,
-            self.cfg.camera_frustum_ray_samples,
-            device=self.device,
-        )
-        ray_points = camera_pos_w.view(1, 1, 3) + ray_t.view(1, -1, 1) * (
-            corners_w - camera_pos_w.unsqueeze(0)
-        ).unsqueeze(1)
-        edge_t = torch.linspace(
-            0.0, 1.0, self.cfg.camera_frustum_edge_samples, device=self.device
-        )
-        edge_points = []
+        line_starts = []
+        line_ends = []
+        for corner in corners_w:
+            line_starts.append(camera_pos_w)
+            line_ends.append(corner)
         for index in range(4):
-            start = corners_w[index]
-            end = corners_w[(index + 1) % 4]
-            edge_points.append(start.unsqueeze(0) + edge_t.unsqueeze(1) * (end - start))
-        points_w = torch.cat((ray_points.reshape(-1, 3), *edge_points), dim=0)
-        self.camera_frustum_visualizer.set_visibility(True)
-        self.camera_frustum_visualizer.visualize(points_w)
+            line_starts.append(corners_w[index])
+            line_ends.append(corners_w[(index + 1) % 4])
+        starts = torch.stack(line_starts).detach().cpu().tolist()
+        ends = torch.stack(line_ends).detach().cpu().tolist()
+        self._viewport_debug_draw.draw_lines(
+            starts,
+            ends,
+            [(0.0, 0.85, 1.0, 1.0)] * len(starts),
+            [2.0] * len(starts),
+        )
+        self._viewport_debug_draw.draw_points(
+            [camera_pos_w.detach().cpu().tolist()],
+            [(0.0, 0.85, 1.0, 1.0)],
+            [10.0],
+        )
 
 
 @configclass
@@ -571,41 +587,10 @@ class RearVisionTrajectoryCommandCfg(UniformPoseWBCCommandCfg):
     synthetic_lateral_amplitude_range_m: tuple[float, float] = (-0.15, 0.15)
     synthetic_wavelength_range_m: tuple[float, float] = (3.0, 8.0)
     synthetic_speed_range_mps: tuple[float, float] = (0.10, 0.60)
-    goal_pose_visualizer_cfg = SPHERE_MARKER_CFG.replace(
-        prim_path="/Visuals/RearVision/goal_point"
-    )
-    goal_pose_visualizer_cfg.markers["sphere"].radius = 0.018
-    goal_pose_visualizer_cfg.markers["sphere"].visual_material = sim_utils.PreviewSurfaceCfg(
-        diffuse_color=(1.0, 0.05, 0.05), emissive_color=(0.35, 0.0, 0.0)
-    )
-    current_pose_visualizer_cfg = SPHERE_MARKER_CFG.replace(
-        prim_path="/Visuals/RearVision/current_point"
-    )
-    current_pose_visualizer_cfg.markers["sphere"].radius = 0.018
-    current_pose_visualizer_cfg.markers["sphere"].visual_material = sim_utils.PreviewSurfaceCfg(
-        diffuse_color=(0.05, 1.0, 0.05), emissive_color=(0.0, 0.35, 0.0)
-    )
-    detected_path_visualizer_cfg = SPHERE_MARKER_CFG.replace(
-        prim_path="/Visuals/RearVision/detected_path"
-    )
-    detected_path_visualizer_cfg.markers["sphere"].radius = 0.010
-    detected_path_visualizer_cfg.markers["sphere"].visual_material = sim_utils.PreviewSurfaceCfg(
-        diffuse_color=(1.0, 0.75, 0.0), emissive_color=(0.25, 0.12, 0.0)
-    )
-    camera_frustum_visualizer_cfg = SPHERE_MARKER_CFG.replace(
-        prim_path="/Visuals/RearVision/camera_frustum"
-    )
-    camera_frustum_visualizer_cfg.markers["sphere"].radius = 0.006
-    camera_frustum_visualizer_cfg.markers["sphere"].visual_material = sim_utils.PreviewSurfaceCfg(
-        diffuse_color=(0.0, 0.85, 1.0), emissive_color=(0.0, 0.25, 0.35)
-    )
     camera_frustum_min_depth_m: float = 0.08
     camera_frustum_max_depth_m: float = 6.0
     camera_frustum_ground_z_m: float = 0.0
     camera_frustum_ground_offset_m: float = 0.015
-    camera_frustum_near_fraction: float = 0.04
-    camera_frustum_ray_samples: int = 14
-    camera_frustum_edge_samples: int = 12
     max_debug_path_markers: int = 128
     debug_path_height_offset_m: float = 0.012
     controller_status_period_steps: int = 25

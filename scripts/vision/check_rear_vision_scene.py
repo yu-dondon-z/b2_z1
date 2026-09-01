@@ -56,8 +56,11 @@ def main() -> None:
     env = gym.make("Unitree-b2z1-AMP-Rear-Vision-Play", cfg=cfg)
     env.reset()
     try:
+        camera_safe_debug_term = env.unwrapped.command_manager.get_term("ee_target")
         for _ in range(20):
             with torch.inference_mode():
+                if hasattr(camera_safe_debug_term, "clear_viewport_debug_before_camera_render"):
+                    camera_safe_debug_term.clear_viewport_debug_before_camera_render()
                 env.step(torch.zeros(env.action_space.shape, device=env.unwrapped.device))
 
         scene = env.unwrapped.scene
