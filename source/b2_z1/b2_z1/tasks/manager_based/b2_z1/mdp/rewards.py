@@ -30,6 +30,22 @@ def smoothness(env: ManagerBasedRLEnv) -> torch.Tensor:
         dim=1,
     )
 
+
+def joint_group_action_rate_l2(
+    env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg
+) -> torch.Tensor:
+    """Penalize action changes only for the selected joints.
+
+    This lets the arm receive stronger smoothing than the legs without
+    suppressing the leg action bandwidth needed for a trot.
+    """
+    joint_ids = asset_cfg.joint_ids
+    action_delta = (
+        env.action_manager.action[:, joint_ids]
+        - env.action_manager.prev_action[:, joint_ids]
+    )
+    return torch.sum(torch.square(action_delta), dim=1)
+
 def power_penalty(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
     """Penalize power consumption of the robot."""
     # extract the used quantities (to enable type-hinting)
@@ -605,6 +621,38 @@ def link_stability(
     reward = lin_acc_reward + 1.0 * ang_acc_reward 
     
     return reward
+
+
+def link_world_stability(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg,
+    link_name: str = "link_gun",
+    lin_acc_std: float = 2.0,
+    ang_acc_std: float = 4.0,
+    angular_weight: float = 0.25,
+) -> torch.Tensor:
+    """Penalize endpoint acceleration in the world frame with a bounded cost.
+
+    ``link_stability`` intentionally subtracts base acceleration.  That is
+    useful for suppressing arm motion relative to the torso, but it cannot see
+    endpoint shake caused by torso roll/pitch during locomotion.  This term
+    complements it by measuring the actual world-frame endpoint acceleration.
+    The exponential saturation prevents contact impulses from dominating PPO.
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+    link_ids, _ = asset.find_bodies(link_name)
+    link_idx = link_ids[0]
+
+    lin_acc_norm = torch.linalg.norm(
+        asset.data.body_com_lin_acc_w[:, link_idx, :], dim=1
+    )
+    ang_acc_norm = torch.linalg.norm(
+        asset.data.body_com_ang_acc_w[:, link_idx, :], dim=1
+    )
+
+    lin_cost = -torch.expm1(-lin_acc_norm / lin_acc_std)
+    ang_cost = -torch.expm1(-ang_acc_norm / ang_acc_std)
+    return lin_cost + angular_weight * ang_cost
 
 
 def swing_leg_height_reward(

@@ -916,6 +916,52 @@ class DeploymentFineTuneRewardsCfg(RewardsCfg):
 
 
 @configclass
+class StabilityFineTuneRewardsCfg(DeploymentFineTuneRewardsCfg):
+    """Target endpoint shake and asymmetric trot contact timing."""
+
+    world_ee_stability = RewTerm(
+        func=mdp.link_world_stability,
+        weight=-0.15,
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names="link_gun"),
+            "link_name": "link_gun",
+            "lin_acc_std": 2.0,
+            "ang_acc_std": 4.0,
+            "angular_weight": 0.25,
+        },
+    )
+    arm_action_rate_l2 = RewTerm(
+        func=mdp.joint_group_action_rate_l2,
+        weight=-0.05,
+        params={
+            "asset_cfg": SceneEntityCfg("robot", joint_names=Z1_JOINT_NAMES),
+        },
+    )
+    air_time_variance = RewTerm(
+        func=mdp.air_time_variance_penalty,
+        weight=-0.30,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
+        },
+    )
+    trot_diagonal_sync = RewTerm(
+        func=mdp.GaitReward,
+        weight=0.35,
+        params={
+            "std": math.sqrt(0.25),
+            "max_err": 0.2,
+            "velocity_threshold": 0.1,
+            "synced_feet_pair_names": (
+                ("FL_foot", "RR_foot"),
+                ("FR_foot", "RL_foot"),
+            ),
+            "asset_cfg": SceneEntityCfg("robot"),
+            "sensor_cfg": SceneEntityCfg("contact_forces"),
+        },
+    )
+
+
+@configclass
 class B2Z1AMPDeploymentFineTuneEnvCfg(B2Z1AMPEnvCfg):
     """Fine-tuning setup matching long-running MuJoCo deployment conditions."""
 
@@ -923,6 +969,18 @@ class B2Z1AMPDeploymentFineTuneEnvCfg(B2Z1AMPEnvCfg):
 
     def __post_init__(self):
         super().__post_init__()
+
+        # model_11998 and the current MuJoCo deployment both use direct
+        # actions (deployment action_filter_alpha=1.0).  Introducing the
+        # alpha=0.2 EMA during fine-tuning changes the closed-loop dynamics and
+        # made the policy compensate with increasingly oscillatory raw actions.
+        self.actions.JointPositionAction = mdp.JointPositionActionCfg(
+            asset_name="robot",
+            joint_names=[".*"],
+            scale=0.25,
+            use_default_offset=True,
+            clip={".*": (-100.0, 100.0)},
+        )
 
         # Twenty-second episodes hid the delayed oscillation seen after about
         # one minute in MuJoCo.
@@ -976,6 +1034,20 @@ class B2Z1AMPDeploymentFineTuneEnvCfg(B2Z1AMPEnvCfg):
         self.rewards.dof_acc_l2.weight = -1.0e-6
         self.rewards.ee_stability.weight = -0.20
         self.rewards.base_angular_velocity.weight = -0.75
+
+
+@configclass
+class B2Z1AMPStabilityFineTuneEnvCfg(B2Z1AMPDeploymentFineTuneEnvCfg):
+    """Second deployment pass for arm shake and intermittent limping."""
+
+    rewards: StabilityFineTuneRewardsCfg = StabilityFineTuneRewardsCfg()
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        # Retain enough leg bandwidth for AMP while reducing body sway that
+        # otherwise appears as endpoint shake in the world frame.
+        self.rewards.base_angular_velocity.weight = -1.0
 
 
 @configclass
@@ -1033,16 +1105,30 @@ class B2Z1AMPEnvCfg_Play(B2Z1AMPEnvCfg):
         self.commands.ee_target.limit_ranges.pos_x = (2.0, 6.0)
         self.commands.ee_target.limit_ranges.pos_y = (0.0, 0.0)
         self.commands.ee_target.limit_ranges.pos_z = (0.10, 0.10)
-        
+
         self.commands.ee_target.ranges = self.commands.ee_target.limit_ranges
         # Show the desired straight centerline and the actual end-effector
         # trace during playback. Training keeps this disabled for performance.
         self.commands.ee_target.debug_vis = True
-        
-        
-        
+
         self.terminations.bad_orientation = None
         self.terminations.base_contact = None
+
+
+@configclass
+class B2Z1AMPFilteredEnvCfg_Play(B2Z1AMPEnvCfg_Play):
+    """Playback matching the alpha=0.20 action dynamics used by model_15997."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.actions.JointPositionAction = mdp.FilteredJointPositionActionCfg(
+            asset_name="robot",
+            joint_names=[".*"],
+            scale=0.25,
+            use_default_offset=True,
+            clip={".*": (-100.0, 100.0)},
+            alpha=0.20,
+        )
 
 
 @configclass

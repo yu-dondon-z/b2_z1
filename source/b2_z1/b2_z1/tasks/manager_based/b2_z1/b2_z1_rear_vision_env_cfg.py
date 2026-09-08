@@ -11,7 +11,12 @@ from isaaclab.sensors import CameraCfg
 from isaaclab.utils import configclass
 
 from . import mdp
-from .b2_z1_amp_env_cfg import B2Z1AMPEnvCfg, B2Z1SceneCfg, GROUND_MATERIAL_CFG
+from .b2_z1_amp_env_cfg import (
+    B2Z1AMPEnvCfg,
+    B2Z1SceneCfg,
+    GROUND_MATERIAL_CFG,
+    StabilityFineTuneRewardsCfg,
+)
 
 
 RGB_WIDTH = 640
@@ -278,6 +283,111 @@ class B2Z1RearSyntheticAMPEnvCfg(B2Z1AMPEnvCfg):
         # by RearVisionTrajectoryCommand, so it no longer points toward a rear
         # target and accidentally commands backward walking.
         self.commands.base_velocity.curriculum_enabled = False
+
+
+@configclass
+class B2Z1RearDeploymentFineTuneAMPEnvCfg(B2Z1RearSyntheticAMPEnvCfg):
+    """Rear-path fine-tuning for stand/start transitions and sim-to-sim stability.
+
+    Unlike the older deployment fine-tune task, this task deliberately keeps
+    the filtered action interface used to train ``model_7999.pt``.  The
+    ordinary standing resets and periodically sampled standing commands fill
+    the state-distribution gap between reference-state Isaac playback and a
+    controller taking over a stationary robot in MuJoCo or on hardware.
+    """
+
+    rewards: StabilityFineTuneRewardsCfg = StabilityFineTuneRewardsCfg()
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        # Long enough to expose delayed oscillation while still generating
+        # several stop/start command transitions within every episode.
+        self.episode_length_s = 60.0
+
+        # Keep some motion-reference resets to preserve the learned trot, but
+        # train primarily from the nominal static pose used at deployment.
+        self.reference_state_initialization_prob = 0.25
+        self.events.reset_base.params["pose_range"].update(
+            {"roll": (-0.04, 0.04), "pitch": (-0.04, 0.04)}
+        )
+        self.events.reset_base.params["velocity_range"] = {
+            "x": (-0.04, 0.04),
+            "y": (-0.04, 0.04),
+            "z": (-0.02, 0.02),
+            "roll": (-0.08, 0.08),
+            "pitch": (-0.08, 0.08),
+            "yaw": (-0.06, 0.06),
+        }
+        self.events.reset_robot_joints.params["velocity_range"] = (-0.05, 0.05)
+
+        # EEDerivedVelocityCommand masks the synthetic path velocity for these
+        # environments. Re-sampling every few seconds teaches both directions
+        # of the transition without changing the rear TCP command geometry.
+        self.commands.base_velocity.rel_standing_envs = 0.25
+        self.commands.base_velocity.resampling_time_range = (4.0, 7.0)
+        self.commands.base_velocity.curriculum_enabled = False
+
+        # Match realistic deployment disturbances. The base task's stronger,
+        # very frequent pushes obscure the specific takeover behavior.
+        self.events.push_robot.interval_range_s = (10.0, 15.0)
+        self.events.push_robot.params["velocity_range"] = {
+            "x": (-0.20, 0.20),
+            "y": (-0.25, 0.25),
+            "roll": (-0.15, 0.15),
+            "pitch": (-0.12, 0.12),
+            "yaw": (-0.12, 0.12),
+        }
+
+        # StabilityFineTuneRewardsCfg adds world-frame TCP acceleration and
+        # diagonal-contact symmetry. These weights retain enough leg bandwidth
+        # for the AMP trot while discouraging the observed arm/body shaking.
+        self.rewards.feet_air_time.weight = 0.50
+        self.rewards.action_rate_l2.weight = -0.02
+        self.rewards.action_smoothness.weight = -0.02
+        self.rewards.dof_acc_l2.weight = -1.0e-6
+        self.rewards.ee_stability.weight = -0.20
+        self.rewards.base_angular_velocity.weight = -1.0
+
+
+@configclass
+class B2Z1RearDeploymentFineTuneAMPEnvCfg_Play(B2Z1RearDeploymentFineTuneAMPEnvCfg):
+    """Deterministic nominal-stand playback for deployment checkpoint selection."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.num_envs = 1
+        self.episode_length_s = 120.0
+
+        # Exercise the deployment gap explicitly: begin from the nominal
+        # stationary pose instead of dropping the robot into a motion frame.
+        self.reference_state_initialization_prob = 0.0
+        self.commands.base_velocity.rel_standing_envs = 0.0
+        self.commands.ee_target = _rear_command("synthetic", debug_vis=True)
+        self.commands.ee_target.synthetic_speed_range_mps = (0.30, 0.30)
+        self.commands.ee_target.synthetic_lateral_amplitude_range_m = (0.12, 0.12)
+        self.commands.ee_target.synthetic_wavelength_range_m = (6.0, 6.0)
+
+        self.events.physics_material = None
+        self.events.add_base_mass = None
+        self.events.base_com = None
+        self.events.actuator_gains = None
+        self.events.joint_dynamics = None
+        self.events.base_external_force_torque = None
+        self.events.push_robot = None
+        self.events.reset_base.params["pose_range"] = {
+            "x": (0.0, 0.0),
+            "y": (0.0, 0.0),
+            "roll": (0.0, 0.0),
+            "pitch": (0.0, 0.0),
+            "yaw": (0.0, 0.0),
+        }
+        self.events.reset_base.params["velocity_range"] = {
+            axis: (0.0, 0.0) for axis in ("x", "y", "z", "roll", "pitch", "yaw")
+        }
+        self.events.reset_robot_joints.params["velocity_range"] = (0.0, 0.0)
+        self.terminations.bad_orientation = None
+        self.terminations.base_contact = None
 
 
 @configclass

@@ -21,7 +21,7 @@ exec "${PYTHON_BIN}" scripts/rsl_rl/train_amp.py \
     --resume \
     --load_run "${LOAD_RUN}" \
     --checkpoint "${CHECKPOINT}" \
-    --max_iterations 4000 \
-    --run_name deployment_finetune_from11998 \
+    --max_iterations 2000 \
+    --run_name deployment_finetune_v2_from11998 \
     --reset_optimizer \
     "$@"

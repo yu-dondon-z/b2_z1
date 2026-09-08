@@ -137,13 +137,17 @@ class AMP_OnPolicyRunner:
             torch.tensor(self.amp_cfg["min_normalized_std"], device=self.device) * 
             (up_limit - low_limit)
         )
+
+        max_std = self.amp_cfg.get("max_policy_std")
+        if max_std is not None:
+            max_std = torch.tensor(max_std, device=self.device)
         
         
         
         # initialize algorithm
         alg_class = eval(self.alg_cfg.pop("class_name"))
         self.alg: AMP_PPO |PPO | Distillation = alg_class(
-            policy, discriminator, amp_data, amp_normalizer, min_std,
+            policy, discriminator, amp_data, amp_normalizer, min_std, max_std=max_std,
             device=self.device, **self.alg_cfg, multi_gpu_cfg=self.multi_gpu_cfg
         )
 

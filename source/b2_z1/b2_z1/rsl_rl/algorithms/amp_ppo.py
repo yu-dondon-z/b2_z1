@@ -33,6 +33,7 @@ class AMP_PPO:
         amp_data,
         amp_normalizer,
         min_std=None,
+        max_std=None,
         amp_replay_buffer_size=100000,
         
         num_learning_epochs=1,
@@ -151,6 +152,7 @@ class AMP_PPO:
         self.learning_rate = learning_rate
         self.normalize_advantage_per_mini_batch = normalize_advantage_per_mini_batch
         self.min_std = min_std
+        self.max_std = max_std
         
 
     def init_storage(
@@ -496,7 +498,7 @@ class AMP_PPO:
                 self.rnd_optimizer.step()
                 
                 
-            self.policy.std.data = self.policy.std.data.clamp(min=self.min_std)
+            self.policy.std.data = self.policy.std.data.clamp(min=self.min_std, max=self.max_std)
             if self.amp_normalizer is not None:
                 self.amp_normalizer.update(policy_state_unnorm.cpu().numpy())
                 self.amp_normalizer.update(expert_state_unnorm.cpu().numpy())

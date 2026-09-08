@@ -51,6 +51,11 @@ class AMP_AlgorithmCfg:
     amp_num_preload_transitions: int = 20000
     
     min_normalized_std: list[float] = [0.01, 0.01, 0.01] * 4
+
+    # Optional absolute upper bound for the policy exploration standard
+    # deviation.  Deployment fine-tuning starts from an already useful policy,
+    # so allowing its noise to grow without bound can destroy the gait.
+    max_policy_std: float | list[float] | None = None
     
     
 

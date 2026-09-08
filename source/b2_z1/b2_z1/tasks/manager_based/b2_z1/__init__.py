@@ -127,6 +127,37 @@ gym.register(
 
 
 gym.register(
+    id="Unitree-b2z1-AMP-Rear-Deployment-Finetune",
+    entry_point="b2_z1.envs:B2Z1ManagerAMPBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": (
+            f"{__name__}.b2_z1_rear_vision_env_cfg:B2Z1RearDeploymentFineTuneAMPEnvCfg"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            f"{agents.__name__}.rsl_rl_amp_cfg:AMPRearDeploymentFineTuneRunnerCfg"
+        ),
+    },
+)
+
+
+gym.register(
+    id="Unitree-b2z1-AMP-Rear-Deployment-Finetune-Play",
+    entry_point="b2_z1.envs:B2Z1ManagerAMPBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": (
+            f"{__name__}.b2_z1_rear_vision_env_cfg:"
+            "B2Z1RearDeploymentFineTuneAMPEnvCfg_Play"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            f"{agents.__name__}.rsl_rl_amp_cfg:AMPRearDeploymentFineTuneRunnerCfg"
+        ),
+    },
+)
+
+
+gym.register(
     id="Unitree-b2z1-AMP-Rear-Vision-Play",
     entry_point="b2_z1.envs:B2Z1ManagerAMPBasedRLEnv",
     disable_env_checker=True,
