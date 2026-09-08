@@ -655,6 +655,93 @@ def link_world_stability(
     return lin_cost + angular_weight * ang_cost
 
 
+def crack_centerline_tracking_exp(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    std: float = 0.10,
+    velocity_threshold: float = 0.08,
+) -> torch.Tensor:
+    """Reward keeping the B2 base centre over the synthetic crack.
+
+    The crack command owns the privileged synthetic path geometry during
+    training.  Deployment still consumes only the original velocity and TCP
+    commands, so this term does not change the policy observation dimension.
+    """
+    command_term = env.command_manager.get_term(command_name)
+    lateral_error = getattr(command_term, "_path_lateral_error_b", None)
+    if lateral_error is None:
+        return torch.zeros(env.num_envs, device=env.device)
+    command_speed = torch.linalg.norm(
+        env.command_manager.get_command("base_velocity")[:, :2], dim=1
+    )
+    reward = torch.exp(-torch.square(lateral_error / max(std, 1.0e-6)))
+    return torch.where(
+        command_speed > velocity_threshold, reward, torch.zeros_like(reward)
+    )
+
+
+def crack_heading_tracking_exp(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    std: float = 0.20,
+    velocity_threshold: float = 0.08,
+) -> torch.Tensor:
+    """Reward aligning the base heading with the local crack tangent."""
+    command_term = env.command_manager.get_term(command_name)
+    heading_error = getattr(command_term, "_path_heading_error_b", None)
+    if heading_error is None:
+        return torch.zeros(env.num_envs, device=env.device)
+    command_speed = torch.linalg.norm(
+        env.command_manager.get_command("base_velocity")[:, :2], dim=1
+    )
+    reward = torch.exp(-torch.square(heading_error / max(std, 1.0e-6)))
+    return torch.where(
+        command_speed > velocity_threshold, reward, torch.zeros_like(reward)
+    )
+
+
+def stance_feet_crack_clearance_penalty(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg,
+    sensor_cfg: SceneEntityCfg,
+    safe_distance: float = 0.07,
+    contact_force_threshold: float = 5.0,
+    velocity_threshold: float = 0.08,
+) -> torch.Tensor:
+    """Penalize support feet whose centres approach the crack trench.
+
+    Only contacting feet are penalized. Swing feet may cross the centreline,
+    but the policy is taught to place each stance foot far enough from the
+    2-cm groove to retain a practical sole-width safety margin.
+    """
+    command_term = env.command_manager.get_term(command_name)
+    distance_fn = getattr(command_term, "crack_lateral_distance_w", None)
+    if distance_fn is None:
+        return torch.zeros(env.num_envs, device=env.device)
+
+    asset: RigidObject = env.scene[asset_cfg.name]
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    foot_positions_w = asset.data.body_pos_w[:, asset_cfg.body_ids, :]
+    crack_distance = distance_fn(foot_positions_w)
+    contact_force = torch.linalg.norm(
+        contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, :], dim=-1
+    )
+    support_mask = contact_force > contact_force_threshold
+    normalized_violation = torch.clamp(
+        (safe_distance - crack_distance) / max(safe_distance, 1.0e-6), min=0.0
+    )
+    penalty = torch.sum(
+        torch.square(normalized_violation) * support_mask.float(), dim=1
+    ) / support_mask.float().sum(dim=1).clamp_min(1.0)
+    command_speed = torch.linalg.norm(
+        env.command_manager.get_command("base_velocity")[:, :2], dim=1
+    )
+    return torch.where(
+        command_speed > velocity_threshold, penalty, torch.zeros_like(penalty)
+    )
+
+
 def swing_leg_height_reward(
     env: ManagerBasedRLEnv,
     sensor_cfg: SceneEntityCfg,

@@ -16,6 +16,7 @@ from isaaclab.utils.math import (
     quat_apply_inverse,
     quat_from_euler_xyz,
     quat_mul,
+    wrap_to_pi,
 )
 
 from .pose_command_wbc import UniformPoseWBCCommand
@@ -50,11 +51,33 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         self._synthetic_amplitude = torch.zeros(self.num_envs, device=self.device)
         self._synthetic_wavenumber = torch.zeros(self.num_envs, device=self.device)
         self._synthetic_speed = torch.zeros(self.num_envs, device=self.device)
+        self._synthetic_tool_height = torch.full(
+            (self.num_envs,), cfg.tool_height_m, device=self.device
+        )
+        self._command_transition_elapsed = torch.zeros(
+            self.num_envs, device=self.device
+        )
+        self._command_transition_start_position_b = torch.zeros(
+            self.num_envs, 3, device=self.device
+        )
+        self._command_transition_start_velocity_b = torch.zeros(
+            self.num_envs, 3, device=self.device
+        )
+        self._filtered_velocity_command_b = torch.zeros(
+            self.num_envs, 3, device=self.device
+        )
         self._filtered_path_heading = torch.zeros(self.num_envs, device=self.device)
         self._path_lateral_error_b = torch.zeros(self.num_envs, device=self.device)
+        self._path_heading_error_b = torch.zeros(self.num_envs, device=self.device)
         self._camera_export_sequence = 0
         self.metrics["vision_valid"] = torch.zeros(self.num_envs, device=self.device)
         self.metrics["cached_path_points"] = torch.zeros(self.num_envs, device=self.device)
+        self.metrics["path_lateral_error"] = torch.zeros(
+            self.num_envs, device=self.device
+        )
+        self.metrics["path_heading_error"] = torch.zeros(
+            self.num_envs, device=self.device
+        )
         if cfg.mode == "file" and self.num_envs != 1:
             raise ValueError("RearVisionTrajectoryCommand file mode requires scene.num_envs == 1")
 
@@ -88,13 +111,28 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
                 torch.rand(count, device=self.device) * (speed_range[1] - speed_range[0]) + speed_range[0]
             )
             self._synthetic_phase[env_ids] = torch.rand(count, device=self.device) * 2.0 * math.pi
+            height_range = self.cfg.tool_height_range_m
+            self._synthetic_tool_height[env_ids] = (
+                torch.rand(count, device=self.device)
+                * (height_range[1] - height_range[0])
+                + height_range[0]
+            )
             self._vision_valid[env_ids] = True
         else:
             self._cached_path_w = torch.empty((0, 3), device=self.device)
             self._latest_path_b = torch.empty((0, 3), device=self.device)
             self._vision_valid[env_ids] = False
         self._hold_current_tool_pose(env_ids)
+        self._command_transition_start_position_b[env_ids] = self.pose_command[
+            env_ids, :3
+        ]
+        self._command_transition_start_velocity_b[env_ids] = (
+            self._filtered_velocity_command_b[env_ids]
+        )
+        self._command_transition_elapsed[env_ids] = 0.0
         self._filtered_path_heading[env_ids] = 0.0
+        self._path_lateral_error_b[env_ids] = 0.0
+        self._path_heading_error_b[env_ids] = 0.0
         self._reset_tracked_trajectory(env_ids)
 
     def _update_command(self):
@@ -107,6 +145,12 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
             self._write_controller_status()
         self.metrics["vision_valid"][:] = self._vision_valid.float()
         self.metrics["cached_path_points"][:] = float(len(self._cached_path_w))
+        self.metrics["path_lateral_error"] = torch.abs(
+            self._path_lateral_error_b
+        )
+        self.metrics["path_heading_error"] = torch.abs(
+            self._path_heading_error_b
+        )
 
     def _update_metrics(self):
         super()._update_metrics()
@@ -121,6 +165,23 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         return quat_from_euler_xyz(values, pitches, yaws)
 
     def _set_pose_command_b(self, position_b: torch.Tensor):
+        # A world-fixed crack can temporarily lie outside the arm workspace
+        # while the base is correcting its lateral error. Never expose such
+        # an unreachable point to the policy: base yaw handles path recovery,
+        # while the arm tracks the nearest point inside its trained workspace.
+        position_b = position_b.clone()
+        position_b[:, 0].clamp_(
+            min=self.cfg.limit_ranges.pos_x[0],
+            max=self.cfg.limit_ranges.pos_x[1],
+        )
+        position_b[:, 1].clamp_(
+            min=self.cfg.limit_ranges.pos_y[0],
+            max=self.cfg.limit_ranges.pos_y[1],
+        )
+        position_b[:, 2].clamp_(
+            min=self.cfg.limit_ranges.pos_z[0],
+            max=self.cfg.limit_ranges.pos_z[1],
+        )
         base_pos_w = self.robot.data.body_pos_w[:, self.base_idx]
         base_quat_w = self.robot.data.body_state_w[:, self.base_idx, 3:7]
         quat_b = self._fixed_orientation_b()
@@ -147,23 +208,176 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         self.target_pose_w[env_ids] = self.tracking_pose_w[env_ids]
 
     def _update_synthetic_command(self):
-        self._synthetic_phase += self._synthetic_speed * self.env.step_dt * self._synthetic_wavenumber
+        """Generate a world-fixed crack and deployment-like smooth commands.
+
+        The old synthetic command moved a sinusoid in the instantaneous base
+        frame.  Consequently the robot never accumulated a real cross-track
+        error and could not learn to recover after drifting off the crack.
+        Here every environment owns a stationary world-frame sinusoid.  Its
+        tangent and offset are converted to the same ``vx + wz`` interface
+        used by the visual deployment, while the TCP height is derived from
+        the current base pose instead of assuming a fixed 45 cm base height.
+        """
+        if not self.cfg.synthetic_world_fixed_path:
+            self._update_legacy_synthetic_command()
+            return
+
+        dt = float(self.env.step_dt)
+        base_pos_w = self.robot.data.body_pos_w[:, self.base_idx]
+        base_quat_w = self.robot.data.body_state_w[:, self.base_idx, 3:7]
+        base_heading_w = self.robot.data.heading_w
+        env_origins = self.env.scene.env_origins
+
+        local_x = base_pos_w[:, 0] - env_origins[:, 0]
+        phase_at_base = (
+            self._synthetic_wavenumber * local_x + self._synthetic_phase
+        )
+        crack_y_w = (
+            env_origins[:, 1]
+            + self._synthetic_amplitude * torch.sin(phase_at_base)
+        )
+        tangent_slope = (
+            self._synthetic_amplitude
+            * self._synthetic_wavenumber
+            * torch.cos(phase_at_base)
+        )
+        tangent_heading_w = torch.atan(tangent_slope)
+
+        # Signed distance along the robot's horizontal left axis. Positive
+        # means that the crack lies to the left of the current base centre.
+        lateral_error_w = crack_y_w - base_pos_w[:, 1]
+        lateral_error_b = lateral_error_w * torch.cos(base_heading_w)
+        tangent_heading_error = wrap_to_pi(tangent_heading_w - base_heading_w)
+        cross_track_heading = torch.atan2(
+            self.cfg.cross_track_gain * lateral_error_b,
+            torch.full_like(lateral_error_b, self.cfg.path_lookahead_m),
+        )
+        desired_heading_error = wrap_to_pi(
+            tangent_heading_error + cross_track_heading
+        )
+        alpha = self.cfg.path_heading_filter_alpha
+        self._filtered_path_heading = (
+            (1.0 - alpha) * self._filtered_path_heading
+            + alpha * desired_heading_error
+        )
+        self._path_lateral_error_b[:] = lateral_error_b
+        self._path_heading_error_b[:] = tangent_heading_error
+
+        desired_velocity_b = torch.zeros_like(self.base_velocity_command_b)
+        speed_scale = torch.cos(self._filtered_path_heading).clamp(0.60, 1.0)
+        desired_velocity_b[:, 0] = self._synthetic_speed * speed_scale
+        desired_velocity_b[:, 2] = (
+            self.cfg.path_heading_gain * self._filtered_path_heading
+        ).clamp(-self.cfg.max_yaw_rate_rps, self.cfg.max_yaw_rate_rps)
+
+        self._command_transition_elapsed += dt
+        transition_duration = max(self.cfg.command_transition_time_s, dt)
+        transition_blend = torch.clamp(
+            self._command_transition_elapsed / transition_duration, 0.0, 1.0
+        )
+        # Smoothstep has zero slope at both ends and avoids an acceleration
+        # impulse when locomotion/trajectory control first takes over.
+        transition_blend = transition_blend * transition_blend * (
+            3.0 - 2.0 * transition_blend
+        )
+        blended_velocity_b = self._command_transition_start_velocity_b + (
+            desired_velocity_b - self._command_transition_start_velocity_b
+        ) * transition_blend.unsqueeze(1)
+        velocity_tau = max(self.cfg.velocity_filter_time_constant_s, dt)
+        velocity_alpha = 1.0 - math.exp(-dt / velocity_tau)
+        self._filtered_velocity_command_b += velocity_alpha * (
+            blended_velocity_b - self._filtered_velocity_command_b
+        )
+        self.base_velocity_command_b[:] = self._filtered_velocity_command_b
+
+        # Select a point on the same world crack behind B2.  Its world height
+        # is road height plus the sampled welding standoff. Converting the
+        # complete point back into the instantaneous base frame automatically
+        # compensates base-height variation, roll and pitch.
+        rear_x = sum(self.cfg.rear_work_x_range_m) * 0.5
+        target_x_w = base_pos_w[:, 0] + rear_x * torch.cos(tangent_heading_w)
+        target_local_x = target_x_w - env_origins[:, 0]
+        target_phase = (
+            self._synthetic_wavenumber * target_local_x
+            + self._synthetic_phase
+        )
+        target_w = torch.zeros_like(base_pos_w)
+        target_w[:, 0] = target_x_w
+        target_w[:, 1] = (
+            env_origins[:, 1]
+            + self._synthetic_amplitude * torch.sin(target_phase)
+        )
+        target_w[:, 2] = (
+            env_origins[:, 2]
+            + self.cfg.synthetic_ground_height_w_m
+            + self._synthetic_tool_height
+        )
+        desired_target_b = quat_apply_inverse(
+            base_quat_w, target_w - base_pos_w
+        )
+        target_b = self._command_transition_start_position_b + (
+            desired_target_b - self._command_transition_start_position_b
+        ) * transition_blend.unsqueeze(1)
+        self._set_pose_command_b(target_b)
+        self._vision_valid[:] = True
+
+    def _update_legacy_synthetic_command(self):
+        """Retain the original moving base-frame path for old task IDs."""
+        self._synthetic_phase += (
+            self._synthetic_speed
+            * self.env.step_dt
+            * self._synthetic_wavenumber
+        )
         lateral = self._synthetic_amplitude * torch.sin(self._synthetic_phase)
         rear_x = sum(self.cfg.rear_work_x_range_m) * 0.5
         target_b = torch.zeros(self.num_envs, 3, device=self.device)
         target_b[:, 0] = rear_x
         target_b[:, 1] = lateral
-        target_b[:, 2] = self.cfg.synthetic_ground_z_b_m + self.cfg.tool_height_m
+        target_b[:, 2] = (
+            self.cfg.synthetic_ground_z_b_m + self.cfg.tool_height_m
+        )
         self._set_pose_command_b(target_b)
 
-        tangent_y = self._synthetic_amplitude * self._synthetic_wavenumber * torch.cos(self._synthetic_phase)
+        tangent_y = (
+            self._synthetic_amplitude
+            * self._synthetic_wavenumber
+            * torch.cos(self._synthetic_phase)
+        )
         heading_error = torch.atan(tangent_y)
         self.base_velocity_command_b[:, 0] = self._synthetic_speed
         self.base_velocity_command_b[:, 1] = 0.0
         self.base_velocity_command_b[:, 2] = (
             self.cfg.path_heading_gain * heading_error
         ).clamp(-self.cfg.max_yaw_rate_rps, self.cfg.max_yaw_rate_rps)
+        self._path_lateral_error_b.zero_()
+        self._path_heading_error_b[:] = heading_error
         self._vision_valid[:] = True
+
+    def crack_lateral_distance_w(self, points_w: torch.Tensor) -> torch.Tensor:
+        """Return normal distance from world points to the synthetic crack."""
+        if self.cfg.mode != "synthetic" or not self.cfg.synthetic_world_fixed_path:
+            return torch.full(
+                points_w.shape[:-1], math.inf,
+                device=points_w.device, dtype=points_w.dtype,
+            )
+        env_origins = self.env.scene.env_origins
+        local_x = points_w[..., 0] - env_origins[:, None, 0]
+        phase = (
+            self._synthetic_wavenumber[:, None] * local_x
+            + self._synthetic_phase[:, None]
+        )
+        crack_y = (
+            env_origins[:, None, 1]
+            + self._synthetic_amplitude[:, None] * torch.sin(phase)
+        )
+        slope = (
+            self._synthetic_amplitude[:, None]
+            * self._synthetic_wavenumber[:, None]
+            * torch.cos(phase)
+        )
+        return torch.abs(points_w[..., 1] - crack_y) / torch.sqrt(
+            1.0 + slope * slope
+        )
 
     def _ingest_latest_vision_file(self):
         path = Path(self.cfg.trajectory_file).expanduser()
@@ -289,10 +503,7 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         self._path_lateral_error_b.zero_()
         fresh = time.monotonic() - self._last_vision_wall_time <= self.cfg.stale_timeout_s
         if not fresh or len(self._latest_path_b) < self.cfg.minimum_path_points:
-            self.base_velocity_command_b.zero_()
-            self._filtered_path_heading.zero_()
-            self._vision_valid[:] = False
-            self._hold_current_tool_pose()
+            self._handle_file_command_loss()
             return
 
         # The current RGB-D path is in the instantaneous B2 frame. Its tangent
@@ -303,10 +514,7 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
             tangent_b = -tangent_b
         tangent_b = tangent_b / torch.linalg.norm(tangent_b).clamp_min(1.0e-6)
         if tangent_b[0] < self.cfg.minimum_forward_tangent:
-            self.base_velocity_command_b.zero_()
-            self._filtered_path_heading.zero_()
-            self._vision_valid[:] = False
-            self._hold_current_tool_pose()
+            self._handle_file_command_loss()
             return
         # Pure-pursuit correction combines the local crack tangent with the
         # lateral error at a forward look-ahead point. It corrects both yaw
@@ -314,10 +522,7 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         # straight crack after drifting sideways.
         forward_points = self._latest_path_b[self._latest_path_b[:, 0] > 0.10]
         if len(forward_points) == 0:
-            self.base_velocity_command_b.zero_()
-            self._filtered_path_heading.zero_()
-            self._vision_valid[:] = False
-            self._hold_current_tool_pose()
+            self._handle_file_command_loss()
             return
         lookahead_index = torch.argmin(
             torch.abs(forward_points[:, 0] - self.cfg.path_lookahead_m)
@@ -335,13 +540,14 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         )
         heading_error = self._filtered_path_heading[0]
 
-        self.base_velocity_command_b.zero_()
+        desired_velocity_b = torch.zeros_like(self.base_velocity_command_b)
         if torch.abs(heading_error) <= self.cfg.rotate_in_place_heading_rad:
             speed_scale = torch.cos(heading_error).clamp(0.25, 1.0)
-            self.base_velocity_command_b[0, 0] = self.cfg.path_speed_mps * speed_scale
-        self.base_velocity_command_b[0, 2] = (
+            desired_velocity_b[0, 0] = self.cfg.path_speed_mps * speed_scale
+        desired_velocity_b[0, 2] = (
             self.cfg.path_heading_gain * heading_error
         ).clamp(-self.cfg.max_yaw_rate_rps, self.cfg.max_yaw_rate_rps)
+        self._filter_file_velocity_command(desired_velocity_b)
 
         base_pos_w = self.robot.data.body_pos_w[0, self.base_idx]
         base_quat_w = self.robot.data.body_state_w[0, self.base_idx, 3:7]
@@ -372,8 +578,53 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         index = candidates[torch.argmin(torch.abs(cached_b[candidates, 0] - desired_x))]
         target_b = cached_b[index].clone()
         target_b[2] += self.cfg.tool_height_m
-        self._set_pose_command_b(target_b.unsqueeze(0))
+        self._set_file_pose_command_b_smooth(target_b.unsqueeze(0))
         self._vision_valid[:] = True
+
+    def _filter_file_velocity_command(self, desired_velocity_b: torch.Tensor):
+        """Low-pass the visual path command before exposing it to the policy."""
+        dt = float(self.env.step_dt)
+        tau = max(self.cfg.velocity_filter_time_constant_s, dt)
+        alpha = 1.0 - math.exp(-dt / tau)
+        self._filtered_velocity_command_b += alpha * (
+            desired_velocity_b - self._filtered_velocity_command_b
+        )
+        self.base_velocity_command_b[:] = self._filtered_velocity_command_b
+
+    def _handle_file_command_loss(self):
+        """Stop smoothly after a genuine visual dropout.
+
+        ``stale_timeout_s`` acts as a grace period. During that period the
+        last filtered command is retained. If vision still has not recovered,
+        velocity decays instead of switching to zero in a single policy step.
+        """
+        self._vision_valid[:] = False
+        age = time.monotonic() - self._last_vision_wall_time
+        if age <= self.cfg.stale_timeout_s:
+            self.base_velocity_command_b[:] = self._filtered_velocity_command_b
+            return
+
+        self._filter_file_velocity_command(
+            torch.zeros_like(self.base_velocity_command_b)
+        )
+        if torch.linalg.norm(self.base_velocity_command_b[0]) <= self.cfg.file_stop_epsilon:
+            self.base_velocity_command_b.zero_()
+            self._filtered_velocity_command_b.zero_()
+            self._filtered_path_heading.zero_()
+            self._hold_current_tool_pose()
+
+    def _set_file_pose_command_b_smooth(self, desired_position_b: torch.Tensor):
+        """Move the visual TCP target continuously when it becomes available."""
+        dt = float(self.env.step_dt)
+        tau = max(self.cfg.file_target_filter_time_constant_s, dt)
+        alpha = 1.0 - math.exp(-dt / tau)
+        delta = alpha * (desired_position_b - self.pose_command[:, :3])
+        max_step = self.cfg.file_target_max_speed_mps * dt
+        delta_norm = torch.linalg.norm(delta, dim=1, keepdim=True)
+        step_scale = torch.clamp(
+            max_step / delta_norm.clamp_min(1.0e-8), max=1.0
+        )
+        self._set_pose_command_b(self.pose_command[:, :3] + delta * step_scale)
 
     def _write_controller_status(self):
         """Publish a low-rate diagnostic proving that WBC consumed vision."""
@@ -394,6 +645,11 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
             "timestamp_ns": time.time_ns(),
             "source_sequence_consumed": self._last_source_sequence,
             "trajectory_fresh": fresh,
+            "trajectory_age_s": (
+                None
+                if not math.isfinite(self._last_vision_wall_time)
+                else time.monotonic() - self._last_vision_wall_time
+            ),
             "tool_target_active": bool(self._vision_valid[0].item()),
             "latest_path_points": len(self._latest_path_b),
             "cached_world_points": len(self._cached_path_w),
@@ -470,8 +726,8 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         tcp_points = torch.cat((self.tracking_pose_w[:, :3], body_pose_w[:, :3]), dim=0)
         tcp_points = tcp_points.detach().cpu().tolist()
 
-        # Small yellow spheres: RGB-D crack centerline after projection into the
-        # world frame. Keep the count bounded so debug rendering stays cheap.
+        # Small yellow spheres: crack centreline in the world frame. Keep the
+        # count bounded so debug rendering stays cheap.
         path_points = []
         if self.cfg.mode == "file" and len(self._cached_path_w) > 0:
             marker_count = min(self.cfg.max_debug_path_markers, len(self._cached_path_w))
@@ -483,6 +739,35 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
             ).long()
             points_w = self._cached_path_w[indices].clone()
             points_w[:, 2] += self.cfg.debug_path_height_offset_m
+            path_points = points_w.detach().cpu().tolist()
+        elif self.cfg.mode == "synthetic" and self.cfg.synthetic_world_fixed_path:
+            # Draw environment zero only. A marker set for every parallel
+            # training environment would obscure the scene and slow the UI.
+            marker_count = min(self.cfg.max_debug_path_markers, 96)
+            base_x_local = (
+                self.robot.data.body_pos_w[0, self.base_idx, 0]
+                - self.env.scene.env_origins[0, 0]
+            )
+            local_x = torch.linspace(
+                base_x_local - 2.0,
+                base_x_local + 5.0,
+                marker_count,
+                device=self.device,
+            )
+            points_w = torch.empty((marker_count, 3), device=self.device)
+            points_w[:, 0] = self.env.scene.env_origins[0, 0] + local_x
+            points_w[:, 1] = self.env.scene.env_origins[0, 1] + (
+                self._synthetic_amplitude[0]
+                * torch.sin(
+                    self._synthetic_wavenumber[0] * local_x
+                    + self._synthetic_phase[0]
+                )
+            )
+            points_w[:, 2] = (
+                self.env.scene.env_origins[0, 2]
+                + self.cfg.synthetic_ground_height_w_m
+                + self.cfg.debug_path_height_offset_m
+            )
             path_points = points_w.detach().cpu().tolist()
 
         frustum_starts, frustum_ends, camera_point = self._camera_frustum_geometry()
@@ -601,12 +886,25 @@ class RearVisionTrajectoryCommandCfg(UniformPoseWBCCommandCfg):
     camera_ring_slots: int = 4
     rear_work_x_range_m: tuple[float, float] = (-1.0, -0.55)
     tool_height_m: float = 0.10
+    tool_height_range_m: tuple[float, float] = (0.10, 0.10)
+    synthetic_world_fixed_path: bool = False
+    synthetic_ground_height_w_m: float = 0.0
+    command_transition_time_s: float = 3.0
+    velocity_filter_time_constant_s: float = 0.35
+    # Retained for checkpoint/config compatibility. New synthetic training
+    # derives target height from the current world-frame base pose.
     synthetic_ground_z_b_m: float = -0.45
     tool_orientation_rpy: tuple[float, float, float] = (0.0, math.pi / 2.0, math.pi)
     path_speed_mps: float = 0.25
     path_heading_gain: float = 1.5
     max_yaw_rate_rps: float = 0.5
-    stale_timeout_s: float = 0.25
+    # RGB-D rendering plus external inference is commonly slower than the
+    # nominal camera period. A one-second grace interval prevents ordinary
+    # frame jitter from becoming an emergency stop.
+    stale_timeout_s: float = 1.0
+    file_target_filter_time_constant_s: float = 0.50
+    file_target_max_speed_mps: float = 0.15
+    file_stop_epsilon: float = 0.01
     minimum_path_points: int = 3
     minimum_forward_tangent: float = 0.65
     path_lookahead_m: float = 1.0

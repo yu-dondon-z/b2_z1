@@ -142,3 +142,44 @@ class AMPRearDeploymentFineTuneRunnerCfg(AMP_PPORunnerCfg):
             0.601, 0.504, 0.599, 0.526, 0.712, 0.427,
         ],
     )
+
+
+@configclass
+class AMPRearVisionV2FineTuneRunnerCfg(AMP_PPORunnerCfg):
+    """Low-drift continuation settings for rear-vision ``model_9400``."""
+
+    max_iterations = 1000
+    save_interval = 100
+    experiment_name = "b2_z1_amp"
+    algorithm = AMP_RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.05,
+        entropy_coef=0.0,
+        num_learning_epochs=2,
+        num_mini_batches=4,
+        learning_rate=2.0e-5,
+        schedule="adaptive",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.005,
+        max_grad_norm=0.5,
+    )
+    amp_cfg = AMP_AlgorithmCfg(
+        amp_motion_files=MOTION_FILES,
+        amp_reward_coef=0.2,
+        # This value is the TASK fraction, not the AMP fraction. Using 0.80
+        # restores four times as much discriminator influence as the failed
+        # 0.95 run and protects the recorded trot during path adaptation.
+        amp_task_reward_lerp=0.80,
+        amp_num_preload_transitions=20000,
+        min_normalized_std=[0.01, 0.01, 0.01] * 6,
+        # model_9400 standard deviations plus about five percent. The cap
+        # prevents late-stage noise growth without clipping the loaded policy
+        # on the first update.
+        max_policy_std=[
+            0.247132, 0.248000, 0.248041, 0.237991, 0.338560, 0.345751,
+            0.298613, 0.295068, 0.201421, 0.298491, 0.295944, 0.306050,
+            0.305866, 0.196675, 0.242351, 0.212919, 0.323570, 0.168675,
+        ],
+    )

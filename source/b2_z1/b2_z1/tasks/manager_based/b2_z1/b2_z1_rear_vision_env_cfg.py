@@ -7,6 +7,8 @@ import os
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg
+from isaaclab.managers import RewardTermCfg as RewTerm
+from isaaclab.managers import SceneEntityCfg
 from isaaclab.sensors import CameraCfg
 from isaaclab.utils import configclass
 
@@ -252,7 +254,13 @@ def _rear_command(mode: str, debug_vis: bool):
         body_name="dummy_target",
         link_name="base_link",
         base_name="base_link",
-        resampling_time_range=(8.0, 10.0),
+        # Synthetic training deliberately resamples trajectories. A live file
+        # stream must not: the previous 8--10 s timer periodically erased the
+        # cached visual path and produced a sudden stop/TCP takeover cycle.
+        # Environment reset still invokes _resample_command normally.
+        resampling_time_range=(
+            (8.0, 10.0) if mode == "synthetic" else (1.0e6, 1.0e6)
+        ),
         debug_vis=debug_vis,
         mode=mode,
         trajectory_file=os.environ.get(
@@ -351,6 +359,163 @@ class B2Z1RearDeploymentFineTuneAMPEnvCfg(B2Z1RearSyntheticAMPEnvCfg):
 
 
 @configclass
+class RearVisionV2FineTuneRewardsCfg(StabilityFineTuneRewardsCfg):
+    """Rewards for crack-centred walking and safe foot placement."""
+
+    crack_centerline_tracking = RewTerm(
+        func=mdp.crack_centerline_tracking_exp,
+        weight=0.50,
+        params={
+            "command_name": "ee_target",
+            # Preserve a useful gradient during recoverable deviations instead
+            # of collapsing to almost zero beyond ten centimetres.
+            "std": 0.20,
+            "velocity_threshold": 0.08,
+        },
+    )
+    crack_heading_tracking = RewTerm(
+        func=mdp.crack_heading_tracking_exp,
+        weight=0.20,
+        params={
+            "command_name": "ee_target",
+            "std": 0.35,
+            "velocity_threshold": 0.08,
+        },
+    )
+    stance_feet_crack_clearance = RewTerm(
+        func=mdp.stance_feet_crack_clearance_penalty,
+        weight=-0.20,
+        params={
+            "command_name": "ee_target",
+            "asset_cfg": SceneEntityCfg("robot", body_names=".*_foot"),
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
+            # 1 cm crack half-width + approximately 3 cm sole radius + margin.
+            "safe_distance": 0.07,
+            "contact_force_threshold": 5.0,
+            "velocity_threshold": 0.08,
+        },
+    )
+
+
+@configclass
+class B2Z1RearVisionV2FineTuneAMPEnvCfg(B2Z1RearDeploymentFineTuneAMPEnvCfg):
+    """Fine-tune V2 for lower TCP, smooth takeover and crack-centred gait.
+
+    The policy observation remains exactly 70-dimensional. Synthetic crack
+    geometry is privileged training information used only by the command and
+    reward terms, so existing rear-vision checkpoints remain load-compatible.
+    """
+
+    rewards: RearVisionV2FineTuneRewardsCfg = RearVisionV2FineTuneRewardsCfg()
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        # A stationary world-frame curve allows physical base drift to become
+        # a genuine cross-track error. This is the condition that was absent
+        # from the original moving base-frame synthetic path.
+        self.commands.ee_target.synthetic_world_fixed_path = True
+        self.commands.ee_target.synthetic_lateral_amplitude_range_m = (-0.12, 0.12)
+        self.commands.ee_target.synthetic_wavelength_range_m = (16.0, 28.0)
+        self.commands.ee_target.synthetic_speed_range_mps = (0.20, 0.35)
+        self.commands.ee_target.path_lookahead_m = 1.00
+        self.commands.ee_target.cross_track_gain = 0.45
+        self.commands.ee_target.path_heading_gain = 0.80
+        self.commands.ee_target.max_yaw_rate_rps = 0.15
+
+        # Train down from the old 10 cm standoff instead of applying a sudden
+        # deployment-only z offset. The target is reconstructed from world
+        # road height and current base pose every step.
+        self.commands.ee_target.tool_height_range_m = (0.08, 0.10)
+        self.commands.ee_target.synthetic_ground_height_w_m = 0.0
+        self.commands.ee_target.command_transition_time_s = 4.0
+        self.commands.ee_target.velocity_filter_time_constant_s = 0.45
+
+        # World-fixed paths require a path-relative reset distribution. The
+        # former +/-0.5 m lateral and +/-pi yaw reset inherited from generic
+        # locomotion placed many environments outside the arm workspace or
+        # facing away from the crack before the first policy action.
+        self.events.reset_base.params["pose_range"].update(
+            {
+                "x": (-0.20, 0.20),
+                "y": (-0.05, 0.05),
+                "yaw": (-0.10, 0.10),
+            }
+        )
+        self.events.push_robot.params["velocity_range"].update(
+            {
+                "y": (-0.10, 0.10),
+                "roll": (-0.08, 0.08),
+                "pitch": (-0.08, 0.08),
+                "yaw": (-0.06, 0.06),
+            }
+        )
+
+        # Repeated smooth stand/start changes teach the same transition that
+        # pressing T produces without switching targets every few seconds.
+        self.commands.ee_target.resampling_time_range = (10.0, 14.0)
+        self.commands.base_velocity.rel_standing_envs = 0.25
+        self.commands.base_velocity.resampling_time_range = (8.0, 12.0)
+        self.rewards.track_lin_vel_xy.weight = 2.5
+        self.rewards.track_ang_vel_z.weight = 1.5
+
+
+@configclass
+class B2Z1RearVisionV2FineTuneAMPEnvCfg_Visual(
+    B2Z1RearVisionV2FineTuneAMPEnvCfg
+):
+    """Small-batch viewer configuration for inspecting V2.1 while training."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        # Debug markers are intentionally limited to this viewer task. Keeping
+        # them out of the 1024-environment task avoids slowing formal runs.
+        self.scene.num_envs = 32
+        self.commands.ee_target.debug_vis = True
+
+
+@configclass
+class B2Z1RearVisionV2FineTuneAMPEnvCfg_Play(B2Z1RearVisionV2FineTuneAMPEnvCfg):
+    """Deterministic playback for selecting the V2.1 fine-tune checkpoint."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.num_envs = 1
+        # Playback is operator-controlled. The former 120 s timeout reset the
+        # robot in the middle of a walk and looked like a sudden crouch every
+        # two minutes. Keep a one-hour safety horizon instead.
+        self.episode_length_s = 3600.0
+        self.reference_state_initialization_prob = 0.0
+        self.commands.base_velocity.rel_standing_envs = 0.0
+        self.commands.ee_target.synthetic_speed_range_mps = (0.30, 0.30)
+        self.commands.ee_target.synthetic_lateral_amplitude_range_m = (0.12, 0.12)
+        self.commands.ee_target.synthetic_wavelength_range_m = (20.0, 20.0)
+        self.commands.ee_target.tool_height_range_m = (0.09, 0.09)
+
+        self.events.physics_material = None
+        self.events.add_base_mass = None
+        self.events.base_com = None
+        self.events.actuator_gains = None
+        self.events.joint_dynamics = None
+        self.events.base_external_force_torque = None
+        self.events.push_robot = None
+        self.events.reset_base.params["pose_range"] = {
+            "x": (0.0, 0.0),
+            "y": (0.0, 0.0),
+            "roll": (0.0, 0.0),
+            "pitch": (0.0, 0.0),
+            "yaw": (0.0, 0.0),
+        }
+        self.events.reset_base.params["velocity_range"] = {
+            axis: (0.0, 0.0)
+            for axis in ("x", "y", "z", "roll", "pitch", "yaw")
+        }
+        self.events.reset_robot_joints.params["velocity_range"] = (0.0, 0.0)
+        self.terminations.bad_orientation = None
+        self.terminations.base_contact = None
+
+
+@configclass
 class B2Z1RearDeploymentFineTuneAMPEnvCfg_Play(B2Z1RearDeploymentFineTuneAMPEnvCfg):
     """Deterministic nominal-stand playback for deployment checkpoint selection."""
 
@@ -432,7 +597,10 @@ class B2Z1RearVisionEnvCfg_Play(B2Z1RearSyntheticAMPEnvCfg):
     def __post_init__(self):
         super().__post_init__()
         self.scene.num_envs = 1
-        self.episode_length_s = 120.0
+        # Playback is operator-controlled. The former 120 s timeout reset the
+        # robot in the middle of a walk and looked like a sudden crouch every
+        # two minutes. Keep a one-hour safety horizon instead.
+        self.episode_length_s = 3600.0
         self.commands.ee_target = _rear_command("file", debug_vis=True)
         self.commands.base_velocity.curriculum_enabled = False
         self.events.physics_material = None
@@ -455,7 +623,10 @@ class B2Z1RearVisionEnvCfg_Play(B2Z1RearSyntheticAMPEnvCfg):
             axis: (0.0, 0.0) for axis in ("x", "y", "z", "roll", "pitch", "yaw")
         }
         self.events.reset_robot_joints.params["velocity_range"] = (0.0, 0.0)
-        self.reference_state_initialization_prob = 1.0
+        # Start and restart from the nominal standing configuration. Random
+        # AMP-frame initialization can select a low leg phase that looks like
+        # an unexplained squat during continuous playback.
+        self.reference_state_initialization_prob = 0.0
         self.terminations.bad_orientation = None
         self.terminations.base_contact = None
         self.rerender_on_reset = True

@@ -1,0 +1,390 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "后向机械臂+视觉：合成轨迹训练",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/rsl_rl/train_amp.py",
+            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--task",
+                "Unitree-b2z1-AMP-Rear-Synthetic",
+                "--num_envs",
+                "1024",
+                "--max_iterations",
+                "8000",
+                "--headless",
+                "agent.amp_cfg.amp_num_preload_transitions=20000"
+            ],
+            "env": {
+                "HYDRA_FULL_ERROR": "1",
+                "PYTHONUNBUFFERED": "1",
+                "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"
+            }
+        },
+        {
+            "name": "后向视觉 V2.2：修复后可视化续训（model_9400）",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/rsl_rl/train_amp.py",
+            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--task",
+                "Unitree-b2z1-AMP-Rear-Vision-V2-Finetune-Visual",
+                "--num_envs",
+                "32",
+                "--resume",
+                "--load_run",
+                "2026-09-04_09-35-51_rear_deployment_finetune_from7999",
+                "--checkpoint",
+                "model_9400.pt",
+                "--max_iterations",
+                "1000",
+                "--run_name",
+                "rear_vision_v2_2_visual_repair_from9400",
+                "--reset_optimizer"
+            ],
+            "env": {
+                "HYDRA_FULL_ERROR": "1",
+                "PYTHONUNBUFFERED": "1",
+                "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"
+            }
+        },
+        {
+            "name": "后向视觉 V2.2：正式修复续训（model_9400）",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/rsl_rl/train_amp.py",
+            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--task",
+                "Unitree-b2z1-AMP-Rear-Vision-V2-Finetune",
+                "--num_envs",
+                "1024",
+                "--resume",
+                "--load_run",
+                "2026-09-04_09-35-51_rear_deployment_finetune_from7999",
+                "--checkpoint",
+                "model_9400.pt",
+                "--max_iterations",
+                "1000",
+                "--run_name",
+                "rear_vision_v2_2_repair_from9400",
+                "--reset_optimizer",
+                "--headless"
+            ],
+            "env": {
+                "HYDRA_FULL_ERROR": "1",
+                "PYTHONUNBUFFERED": "1",
+                "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"
+            }
+        },
+        {
+            "name": "后向机械臂+视觉：播放V2.2最佳策略（model_9600）",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/rsl_rl/play_amp.py",
+            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--task",
+                "Unitree-b2z1-AMP-Rear-Vision-Play",
+                "--num_envs",
+                "1",
+                "--checkpoint",
+                "${workspaceFolder}/logs/rsl_rl/b2_z1_amp/2026-09-08_10-32-14_rear_vision_v2_2_repair_from9400/model_9600.pt",
+                "--enable_cameras",
+                "--real-time"
+            ],
+            "env": {
+                "B2_Z1_VISION_EXCHANGE": "/tmp/b2_z1_vision_bridge",
+                "B2_Z1_VISION_CAMERA": "front_depth",
+                "HYDRA_FULL_ERROR": "1",
+                "PYTHONUNBUFFERED": "1"
+            }
+        },
+        {
+            "name": "后向部署微调：标准站姿起步（model_9400，推荐）",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/rsl_rl/play_amp.py",
+            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--task",
+                "Unitree-b2z1-AMP-Rear-Deployment-Finetune-Play",
+                "--num_envs",
+                "1",
+                "--checkpoint",
+                "${workspaceFolder}/logs/rsl_rl/b2_z1_amp/2026-09-04_09-35-51_rear_deployment_finetune_from7999/model_9400.pt",
+                "--real-time"
+            ],
+            "env": {
+                "HYDRA_FULL_ERROR": "1",
+                "PYTHONUNBUFFERED": "1"
+            }
+        },
+        {
+            "name": "后向机械臂+视觉：检查五路相机",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/vision/check_rear_vision_scene.py",
+            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--headless",
+                "--device",
+                "cuda:0",
+                "--output",
+                "${workspaceFolder}/outputs/rear_vision_camera_check"
+            ],
+            "env": {
+                "B2_Z1_VISION_EXCHANGE": "/tmp/b2_z1_vision_bridge",
+                "HYDRA_FULL_ERROR": "1",
+                "PYTHONUNBUFFERED": "1"
+            }
+        },
+        {
+            "name": "后向机械臂+视觉：启动 RHACrackNet 桥",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/vision/run_rhacracknet_bridge.py",
+            "python": "/home/dong/anaconda3/envs/crack_vision/bin/python",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--exchange-dir",
+                "/tmp/b2_z1_vision_bridge",
+                "--save-overlay",
+                "--display"
+            ],
+            "env": {
+                "PYTHONUNBUFFERED": "1"
+            }
+        },
+        {
+            "name": "AMP：正式训练（1024环境 / 8000轮）",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/rsl_rl/train_amp.py",
+            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--task",
+                "Unitree-b2z1-AMP",
+                "--num_envs",
+                "1024",
+                "--max_iterations",
+                "8000",
+                "--headless",
+                "agent.amp_cfg.amp_num_preload_transitions=20000"
+            ],
+            "env": {
+                "HYDRA_FULL_ERROR": "1",
+                "PYTHONUNBUFFERED": "1",
+                "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"
+            }
+        },
+        {
+            "name": "AMP：播放无枪中心线（选择检查点）",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/rsl_rl/play_amp.py",
+            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--task",
+                "Unitree-b2z1-AMP-Play",
+                "--num_envs",
+                "1",
+                "--checkpoint",
+                "${input:ampCheckpointPath}",
+                "--real-time"
+            ],
+            "env": {
+                "HYDRA_FULL_ERROR": "1",
+                "PYTHONUNBUFFERED": "1"
+            }
+        },
+        {
+            "name": "AMP：播放有焊缝枪中心线（固定 model_11998）",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/rsl_rl/play_amp.py",
+            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--task",
+                "Unitree-b2z1-AMP-Gun-Play",
+                "--num_envs",
+                "1",
+                "--checkpoint",
+                "${workspaceFolder}/logs/rsl_rl/b2_z1_amp/2026-07-28_09-31-44_ee_centerline_stage2/model_11998.pt",
+                "--real-time"
+            ],
+            "env": {
+                "HYDRA_FULL_ERROR": "1",
+                "PYTHONUNBUFFERED": "1"
+            }
+        },
+        {
+            "name": "AMP：播放有焊缝枪中心线（选择检查点）",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/rsl_rl/play_amp.py",
+            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--task",
+                "Unitree-b2z1-AMP-Gun-Play",
+                "--num_envs",
+                "1",
+                "--checkpoint",
+                "${input:ampGunCheckpointPath}",
+                "--real-time"
+            ],
+            "env": {
+                "HYDRA_FULL_ERROR": "1",
+                "PYTHONUNBUFFERED": "1"
+            }
+        },
+        {
+            "name": "PPO：训练（无窗口）",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/rsl_rl/train.py",
+            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--task",
+                "Unitree-b2z1-Velocity",
+                "--headless"
+            ],
+            "env": {
+                "HYDRA_FULL_ERROR": "1",
+                "PYTHONUNBUFFERED": "1"
+            }
+        },
+        {
+            "name": "PPO：播放无枪当前策略",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/rsl_rl/play.py",
+            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--task",
+                "Unitree-b2z1-Velocity-Play",
+                "--num_envs",
+                "1",
+                "--real-time"
+            ],
+            "env": {
+                "HYDRA_FULL_ERROR": "1",
+                "PYTHONUNBUFFERED": "1"
+            }
+        },
+        {
+            "name": "PPO：播放指定检查点",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/rsl_rl/play.py",
+            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--task",
+                "Unitree-b2z1-Velocity-Play",
+                "--num_envs",
+                "1",
+                "--checkpoint",
+                "${input:ppoCheckpointPath}",
+                "--real-time"
+            ],
+            "env": {
+                "HYDRA_FULL_ERROR": "1",
+                "PYTHONUNBUFFERED": "1"
+            }
+        },
+        {
+            "name": "工具：零动作环境测试",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/zero_agent.py",
+            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--task",
+                "Unitree-b2z1-Velocity-Play",
+                "--num_envs",
+                "1"
+            ],
+            "env": {
+                "HYDRA_FULL_ERROR": "1",
+                "PYTHONUNBUFFERED": "1"
+            }
+        }
+    ],
+    "inputs": [
+        {
+            "id": "ampCheckpointPath",
+            "type": "promptString",
+            "description": "输入 AMP 检查点 model_*.pt 的完整路径",
+            "default": "${workspaceFolder}/logs/rsl_rl/b2_z1_amp/2026-08-05_09-16-19_deployment_finetune_v2_from11998/model_13997.pt"
+        },
+        {
+            "id": "ampGunCheckpointPath",
+            "type": "promptString",
+            "description": "输入有焊缝枪中心线 AMP 检查点 model_*.pt 的完整路径",
+            "default": "${workspaceFolder}/logs/rsl_rl/b2_z1_amp/2026-07-28_09-31-44_ee_centerline_stage2/model_11998.pt"
+        },
+        {
+            "id": "ppoCheckpointPath",
+            "type": "promptString",
+            "description": "输入 PPO 检查点 model_*.pt 的完整路径",
+            "default": "${workspaceFolder}/logs/rsl_rl/b2_z1_gun/2026-07-13_16-52-20/model_8600.pt"
+        }
+    ],
+    "compounds": [
+        {
+            "name": "后向机械臂+视觉：完整闭环播放（一键启动）",
+            "configurations": [
+                "后向机械臂+视觉：启动 RHACrackNet 桥",
+                "后向机械臂+视觉：播放V2.2最佳策略（model_9600）"
+            ],
+            "stopAll": true
+        }
+    ]
+}

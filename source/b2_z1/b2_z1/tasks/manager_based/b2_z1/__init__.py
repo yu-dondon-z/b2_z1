@@ -158,6 +158,57 @@ gym.register(
 
 
 gym.register(
+    id="Unitree-b2z1-AMP-Rear-Vision-V2-Finetune",
+    entry_point="b2_z1.envs:B2Z1ManagerAMPBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": (
+            f"{__name__}.b2_z1_rear_vision_env_cfg:"
+            "B2Z1RearVisionV2FineTuneAMPEnvCfg"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            f"{agents.__name__}.rsl_rl_amp_cfg:"
+            "AMPRearVisionV2FineTuneRunnerCfg"
+        ),
+    },
+)
+
+
+gym.register(
+    id="Unitree-b2z1-AMP-Rear-Vision-V2-Finetune-Play",
+    entry_point="b2_z1.envs:B2Z1ManagerAMPBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": (
+            f"{__name__}.b2_z1_rear_vision_env_cfg:"
+            "B2Z1RearVisionV2FineTuneAMPEnvCfg_Play"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            f"{agents.__name__}.rsl_rl_amp_cfg:"
+            "AMPRearVisionV2FineTuneRunnerCfg"
+        ),
+    },
+)
+
+
+gym.register(
+    id="Unitree-b2z1-AMP-Rear-Vision-V2-Finetune-Visual",
+    entry_point="b2_z1.envs:B2Z1ManagerAMPBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": (
+            f"{__name__}.b2_z1_rear_vision_env_cfg:"
+            "B2Z1RearVisionV2FineTuneAMPEnvCfg_Visual"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            f"{agents.__name__}.rsl_rl_amp_cfg:"
+            "AMPRearVisionV2FineTuneRunnerCfg"
+        ),
+    },
+)
+
+
+gym.register(
     id="Unitree-b2z1-AMP-Rear-Vision-Play",
     entry_point="b2_z1.envs:B2Z1ManagerAMPBasedRLEnv",
     disable_env_checker=True,
