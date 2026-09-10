@@ -17,6 +17,59 @@ from isaaclab.managers.manager_base import ManagerTermBase
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
+
+def _heading_hold_mask(env: ManagerBasedRLEnv, command_name: str) -> torch.Tensor:
+    """Return the pure-translation mask exposed by the omni command term."""
+    command_term = env.command_manager.get_term(command_name)
+    mask = getattr(command_term, "is_heading_hold_env", None)
+    if mask is None:
+        return torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+    return mask
+
+
+def _longitudinal_mask(env: ManagerBasedRLEnv, command_name: str) -> torch.Tensor:
+    """Return the forward/backward-only mask exposed by the omni command."""
+    command_term = env.command_manager.get_term(command_name)
+    mask = getattr(command_term, "is_longitudinal_env", None)
+    if mask is None:
+        return torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+    return mask & ~command_term.is_standing_env
+
+
+def straight_lateral_velocity_l2(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize body-frame lateral slip during pure straight translation."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    error = torch.square(asset.data.root_lin_vel_b[:, 1])
+    return error * _longitudinal_mask(env, command_name).float()
+
+
+def straight_yaw_rate_l2(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize unintended yaw rate during pure straight translation."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    error = torch.square(asset.data.root_ang_vel_b[:, 2])
+    return error * _heading_hold_mask(env, command_name).float()
+
+
+def straight_heading_drift_l2(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize accumulated world-heading drift in pure translation modes."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    command_term = env.command_manager.get_term(command_name)
+    target = getattr(command_term, "straight_heading_target", asset.data.heading_w)
+    error = math_utils.wrap_to_pi(asset.data.heading_w - target)
+    return torch.square(error) * _heading_hold_mask(env, command_name).float()
+
 """
 Joint penalties.
 """

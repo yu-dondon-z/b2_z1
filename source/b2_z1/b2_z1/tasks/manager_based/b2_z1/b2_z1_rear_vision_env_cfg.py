@@ -516,6 +516,95 @@ class B2Z1RearVisionV2FineTuneAMPEnvCfg_Play(B2Z1RearVisionV2FineTuneAMPEnvCfg):
 
 
 @configclass
+class RearVisionV3GaitFineTuneRewardsCfg(RearVisionV2FineTuneRewardsCfg):
+    """Conservative gait-refinement rewards built on the stable V2.2 task."""
+
+
+@configclass
+class B2Z1RearVisionV3GaitFineTuneAMPEnvCfg(B2Z1RearVisionV2FineTuneAMPEnvCfg):
+    """Short continuation that targets the remaining limp and speed lag.
+
+    This deliberately preserves the 70-D observation, action filtering, rear
+    TCP geometry and visual path command used by ``model_9600.pt``.  Only the
+    moving-state sampling and a few locomotion reward weights change, so the
+    continuation does not have to relearn the arm/vision task.
+    """
+
+    rewards: RearVisionV3GaitFineTuneRewardsCfg = RearVisionV3GaitFineTuneRewardsCfg()
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        # Spend more of this short run on the deployed 0.30 m/s walking state,
+        # while retaining enough stand/start samples to preserve smooth policy
+        # takeover.  Keep the range inside the data-supported V2.2 envelope.
+        self.commands.base_velocity.rel_standing_envs = 0.15
+        self.commands.base_velocity.resampling_time_range = (12.0, 18.0)
+        self.commands.ee_target.synthetic_speed_range_mps = (0.25, 0.35)
+
+        # model_9600 already tracks commands well in Isaac Sim, but its
+        # diagonal gait reward reaches only about 64% of the available score.
+        # These are small changes rather than hard kinematic constraints: AMP
+        # remains responsible for natural motion and the legs retain clearance.
+        self.rewards.track_lin_vel_xy.weight = 3.0
+        self.rewards.trot_diagonal_sync.weight = 0.50
+        self.rewards.air_time_variance.weight = -0.40
+        self.rewards.feet_height.weight = 0.35
+
+
+@configclass
+class B2Z1RearVisionV3GaitFineTuneAMPEnvCfg_Visual(
+    B2Z1RearVisionV3GaitFineTuneAMPEnvCfg
+):
+    """Small-batch viewer for checking the V3 gait continuation."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.num_envs = 32
+        self.commands.ee_target.debug_vis = True
+
+
+@configclass
+class B2Z1RearVisionV3GaitFineTuneAMPEnvCfg_Play(
+    B2Z1RearVisionV3GaitFineTuneAMPEnvCfg
+):
+    """Deterministic playback used to select a V3 gait checkpoint."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.num_envs = 1
+        self.episode_length_s = 3600.0
+        self.reference_state_initialization_prob = 0.0
+        self.commands.base_velocity.rel_standing_envs = 0.0
+        self.commands.ee_target.synthetic_speed_range_mps = (0.30, 0.30)
+        self.commands.ee_target.synthetic_lateral_amplitude_range_m = (0.12, 0.12)
+        self.commands.ee_target.synthetic_wavelength_range_m = (20.0, 20.0)
+        self.commands.ee_target.tool_height_range_m = (0.09, 0.09)
+
+        self.events.physics_material = None
+        self.events.add_base_mass = None
+        self.events.base_com = None
+        self.events.actuator_gains = None
+        self.events.joint_dynamics = None
+        self.events.base_external_force_torque = None
+        self.events.push_robot = None
+        self.events.reset_base.params["pose_range"] = {
+            "x": (0.0, 0.0),
+            "y": (0.0, 0.0),
+            "roll": (0.0, 0.0),
+            "pitch": (0.0, 0.0),
+            "yaw": (0.0, 0.0),
+        }
+        self.events.reset_base.params["velocity_range"] = {
+            axis: (0.0, 0.0)
+            for axis in ("x", "y", "z", "roll", "pitch", "yaw")
+        }
+        self.events.reset_robot_joints.params["velocity_range"] = (0.0, 0.0)
+        self.terminations.bad_orientation = None
+        self.terminations.base_contact = None
+
+
+@configclass
 class B2Z1RearDeploymentFineTuneAMPEnvCfg_Play(B2Z1RearDeploymentFineTuneAMPEnvCfg):
     """Deterministic nominal-stand playback for deployment checkpoint selection."""
 

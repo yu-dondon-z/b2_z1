@@ -183,3 +183,80 @@ class AMPRearVisionV2FineTuneRunnerCfg(AMP_PPORunnerCfg):
             0.305866, 0.196675, 0.242351, 0.212919, 0.323570, 0.168675,
         ],
     )
+
+
+@configclass
+class AMPRearVisionV3GaitFineTuneRunnerCfg(AMP_PPORunnerCfg):
+    """Very low-drift gait continuation settings for ``model_9600``."""
+
+    max_iterations = 600
+    save_interval = 100
+    # Keep this name so Isaac Lab can resolve the V2.2 source run on resume.
+    experiment_name = "b2_z1_amp"
+    algorithm = AMP_RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.03,
+        entropy_coef=0.0,
+        num_learning_epochs=2,
+        num_mini_batches=4,
+        learning_rate=1.0e-5,
+        schedule="adaptive",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.003,
+        max_grad_norm=0.4,
+    )
+    amp_cfg = AMP_AlgorithmCfg(
+        amp_motion_files=MOTION_FILES,
+        amp_reward_coef=0.2,
+        amp_task_reward_lerp=0.80,
+        amp_num_preload_transitions=20000,
+        min_normalized_std=[0.01, 0.01, 0.01] * 6,
+        # model_9600 learned std plus about 3%.  The tight cap preserves its
+        # exploration profile while preventing the late noise growth/NaNs seen
+        # in older long continuations.
+        max_policy_std=[
+            0.239283, 0.240109, 0.238404, 0.230884, 0.327471, 0.333064,
+            0.287306, 0.284478, 0.193761, 0.285627, 0.284256, 0.295570,
+            0.295242, 0.189852, 0.234105, 0.204933, 0.308848, 0.164316,
+        ],
+    )
+
+
+@configclass
+class AMPProprioOmniV4FineTuneRunnerCfg(AMP_PPORunnerCfg):
+    """Conservative omnidirectional continuation from V3 ``model_10000``."""
+
+    max_iterations = 2000
+    save_interval = 100
+    experiment_name = "b2_z1_amp"
+    algorithm = AMP_RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.05,
+        entropy_coef=0.0,
+        num_learning_epochs=2,
+        num_mini_batches=4,
+        learning_rate=3.0e-5,
+        schedule="adaptive",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.005,
+        max_grad_norm=0.5,
+    )
+    amp_cfg = AMP_AlgorithmCfg(
+        amp_motion_files=MOTION_FILES,
+        amp_reward_coef=0.2,
+        amp_task_reward_lerp=0.80,
+        amp_num_preload_transitions=20000,
+        min_normalized_std=[0.01, 0.01, 0.01] * 6,
+        # model_10000 learned standard deviations plus five percent. This is
+        # enough exploration for new directions without reopening the late-run
+        # noise growth that previously caused NaNs.
+        max_policy_std=[
+            0.251247, 0.252114, 0.250324, 0.242428, 0.343845, 0.349717,
+            0.301671, 0.298702, 0.203449, 0.299908, 0.298469, 0.310349,
+            0.310004, 0.199345, 0.245810, 0.215180, 0.324290, 0.172532,
+        ],
+    )

@@ -209,6 +209,108 @@ gym.register(
 
 
 gym.register(
+    id="Unitree-b2z1-AMP-Rear-Vision-V3-Gait-Finetune",
+    entry_point="b2_z1.envs:B2Z1ManagerAMPBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": (
+            f"{__name__}.b2_z1_rear_vision_env_cfg:"
+            "B2Z1RearVisionV3GaitFineTuneAMPEnvCfg"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            f"{agents.__name__}.rsl_rl_amp_cfg:"
+            "AMPRearVisionV3GaitFineTuneRunnerCfg"
+        ),
+    },
+)
+
+
+gym.register(
+    id="Unitree-b2z1-AMP-Rear-Vision-V3-Gait-Finetune-Visual",
+    entry_point="b2_z1.envs:B2Z1ManagerAMPBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": (
+            f"{__name__}.b2_z1_rear_vision_env_cfg:"
+            "B2Z1RearVisionV3GaitFineTuneAMPEnvCfg_Visual"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            f"{agents.__name__}.rsl_rl_amp_cfg:"
+            "AMPRearVisionV3GaitFineTuneRunnerCfg"
+        ),
+    },
+)
+
+
+gym.register(
+    id="Unitree-b2z1-AMP-Rear-Vision-V3-Gait-Finetune-Play",
+    entry_point="b2_z1.envs:B2Z1ManagerAMPBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": (
+            f"{__name__}.b2_z1_rear_vision_env_cfg:"
+            "B2Z1RearVisionV3GaitFineTuneAMPEnvCfg_Play"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            f"{agents.__name__}.rsl_rl_amp_cfg:"
+            "AMPRearVisionV3GaitFineTuneRunnerCfg"
+        ),
+    },
+)
+
+
+gym.register(
+    id="Unitree-b2z1-AMP-Proprio-Omni-V4-Finetune",
+    entry_point="b2_z1.envs:B2Z1ManagerAMPBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": (
+            f"{__name__}.b2_z1_proprio_omni_env_cfg:"
+            "B2Z1ProprioOmniV4FineTuneAMPEnvCfg"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            f"{agents.__name__}.rsl_rl_amp_cfg:"
+            "AMPProprioOmniV4FineTuneRunnerCfg"
+        ),
+    },
+)
+
+
+gym.register(
+    id="Unitree-b2z1-AMP-Proprio-Omni-V4-Finetune-Visual",
+    entry_point="b2_z1.envs:B2Z1ManagerAMPBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": (
+            f"{__name__}.b2_z1_proprio_omni_env_cfg:"
+            "B2Z1ProprioOmniV4FineTuneAMPEnvCfg_Visual"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            f"{agents.__name__}.rsl_rl_amp_cfg:"
+            "AMPProprioOmniV4FineTuneRunnerCfg"
+        ),
+    },
+)
+
+
+gym.register(
+    id="Unitree-b2z1-AMP-Proprio-Omni-V4-Finetune-Play",
+    entry_point="b2_z1.envs:B2Z1ManagerAMPBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": (
+            f"{__name__}.b2_z1_proprio_omni_env_cfg:"
+            "B2Z1ProprioOmniV4FineTuneAMPEnvCfg_Play"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            f"{agents.__name__}.rsl_rl_amp_cfg:"
+            "AMPProprioOmniV4FineTuneRunnerCfg"
+        ),
+    },
+)
+
+
+gym.register(
     id="Unitree-b2z1-AMP-Rear-Vision-Play",
     entry_point="b2_z1.envs:B2Z1ManagerAMPBasedRLEnv",
     disable_env_checker=True,
