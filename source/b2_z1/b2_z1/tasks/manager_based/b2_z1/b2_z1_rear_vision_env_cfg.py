@@ -28,9 +28,18 @@ ROAD_HALF_WIDTH_M = 95.0
 CRACK_WIDTH_M = 0.02
 CRACK_DEPTH_M = 0.05
 CRACK_CURVE_HALF_LENGTH_M = 20.0
-CRACK_CURVE_AMPLITUDE_M = 0.12
+# The cubic sine has zero slope at x=0, so the robot starts on a centered,
+# forward-facing crack instead of immediately needing a 14-degree turn.  It
+# then reaches +/-0.40 m lateral displacement with a minimum radius of about
+# 8.4 m, inside the 6--12 m arc range used by V5 training.
+CRACK_CURVE_AMPLITUDE_M = 0.40
 CRACK_CURVE_WAVELENGTH_M = 20.0
-CRACK_CURVE_SEGMENT_LENGTH_M = 0.25
+CRACK_CURVE_MESH_STEP_M = 0.05
+# Same cylinder dimensions as b2_z1_gun.urdf, with its lower face centred on
+# the existing dummy_target joint origin in link_gun coordinates.
+WELDING_GUN_LENGTH_M = 1.10
+WELDING_GUN_RADIUS_M = 0.028
+WELDING_GUN_TIP_POSITION = (0.0, -0.03, -0.62)
 
 
 def _camera_model(fx: float, fy: float, clipping_range=(0.07, 6.0)):
@@ -42,48 +51,164 @@ def _camera_model(fx: float, fy: float, clipping_range=(0.07, 6.0)):
     )
 
 
-def _road_half_segment(
-    name: str,
-    center_x: float,
-    length_x: float,
-    crack_center_y: float,
-    left_side: bool,
-) -> AssetBaseCfg:
-    """Create one road half while leaving a 2 cm trench around a local centerline."""
-    half_gap = 0.5 * CRACK_WIDTH_M
-    if left_side:
-        inner_edge_y = crack_center_y + half_gap
-        width_y = ROAD_HALF_WIDTH_M - inner_edge_y
-        center_y = 0.5 * (ROAD_HALF_WIDTH_M + inner_edge_y)
-    else:
-        inner_edge_y = crack_center_y - half_gap
-        width_y = inner_edge_y + ROAD_HALF_WIDTH_M
-        center_y = 0.5 * (-ROAD_HALF_WIDTH_M + inner_edge_y)
-    return AssetBaseCfg(
-        prim_path=f"{{ENV_REGEX_NS}}/{name}",
-        spawn=sim_utils.CuboidCfg(
-            size=(length_x, width_y, CRACK_DEPTH_M),
-            collision_props=sim_utils.CollisionPropertiesCfg(),
-            visual_material=sim_utils.PreviewSurfaceCfg(
-                diffuse_color=(0.42, 0.42, 0.42), roughness=0.95
-            ),
-            physics_material=GROUND_MATERIAL_CFG,
-        ),
-        init_state=AssetBaseCfg.InitialStateCfg(
-            pos=(center_x, center_y, -0.5 * CRACK_DEPTH_M)
-        ),
-        collision_group=-1,
+@sim_utils.clone
+def _spawn_seamless_road_half(
+    prim_path: str,
+    cfg,
+    translation: tuple[float, float, float] | None = None,
+    orientation: tuple[float, float, float, float] | None = None,
+    **kwargs,
+):
+    """Spawn one continuous road half with a curved inner trench wall.
+
+    A single mesh is important here: the former 0.25 m cuboids left transverse
+    render seams, and RHACrackNet occasionally followed those seams instead of
+    the real crack.  The top, bottom and side walls below form one watertight
+    static triangle mesh with no cross-road joints.
+    """
+    import isaacsim.core.utils.prims as prim_utils
+    import numpy as np
+    import trimesh
+
+    from isaaclab.terrains.utils import create_prim_from_mesh
+
+    curve_x = np.linspace(
+        -cfg.curve_half_length,
+        cfg.curve_half_length,
+        round(2.0 * cfg.curve_half_length / cfg.mesh_step) + 1,
+        dtype=np.float64,
     )
+    x = np.concatenate(([-cfg.half_length], curve_x, [cfg.half_length]))
+    center_y = np.zeros_like(x)
+    curved = np.abs(x) <= cfg.curve_half_length + 1.0e-9
+    phase = 2.0 * np.pi * x[curved] / cfg.wavelength
+    center_y[curved] = cfg.amplitude * np.sin(phase) ** 3
+
+    side_sign = 1.0 if cfg.left_side else -1.0
+    inner_y = center_y + side_sign * 0.5 * cfg.crack_width
+    outer_y = np.full_like(x, side_sign * cfg.half_width)
+    top_z = np.zeros_like(x)
+    bottom_z = np.full_like(x, -cfg.crack_depth)
+
+    # Per station: inner-top, outer-top, inner-bottom, outer-bottom.
+    vertices = np.stack(
+        (
+            np.column_stack((x, inner_y, top_z)),
+            np.column_stack((x, outer_y, top_z)),
+            np.column_stack((x, inner_y, bottom_z)),
+            np.column_stack((x, outer_y, bottom_z)),
+        ),
+        axis=1,
+    ).reshape(-1, 3)
+    faces: list[tuple[int, int, int]] = []
+    for station in range(len(x) - 1):
+        a = 4 * station
+        b = a + 4
+        # top, bottom, inner trench wall and remote outer wall
+        faces.extend(
+            [
+                (a, a + 1, b + 1), (a, b + 1, b),
+                (a + 2, b + 3, a + 3), (a + 2, b + 2, b + 3),
+                (a, b, b + 2), (a, b + 2, a + 2),
+                (a + 1, a + 3, b + 3), (a + 1, b + 3, b + 1),
+            ]
+        )
+    last = 4 * (len(x) - 1)
+    faces.extend(
+        [
+            (0, 2, 3), (0, 3, 1),
+            (last, last + 1, last + 3), (last, last + 3, last + 2),
+        ]
+    )
+
+    mesh = trimesh.Trimesh(
+        vertices=vertices,
+        faces=np.asarray(faces, dtype=np.int64),
+        process=False,
+    )
+    # The per-station inner/outer ordering is mirrored between the two road
+    # halves.  Consequently one generated shell has a negative signed volume
+    # unless its winding is reversed. PhysX triangle-mesh collision is
+    # one-sided: leaving that shell inverted lets the corresponding feet pass
+    # through the road and makes the robot roll immediately onto its side.
+    if mesh.volume < 0.0:
+        mesh.invert()
+    create_prim_from_mesh(
+        prim_path,
+        mesh,
+        translation=translation,
+        orientation=orientation,
+        visual_material=cfg.visual_material,
+        physics_material=cfg.physics_material,
+    )
+    return prim_utils.get_prim_at_path(prim_path)
+
+
+@configclass
+class SeamlessCrackedRoadHalfCfg(sim_utils.SpawnerCfg):
+    """Parameters for one side of the seamless cracked road."""
+
+    func = _spawn_seamless_road_half
+    left_side: bool = True
+    half_length: float = ROAD_HALF_LENGTH_M
+    half_width: float = ROAD_HALF_WIDTH_M
+    crack_width: float = CRACK_WIDTH_M
+    crack_depth: float = CRACK_DEPTH_M
+    curve_half_length: float = CRACK_CURVE_HALF_LENGTH_M
+    amplitude: float = CRACK_CURVE_AMPLITUDE_M
+    wavelength: float = CRACK_CURVE_WAVELENGTH_M
+    mesh_step: float = CRACK_CURVE_MESH_STEP_M
+    visual_material: sim_utils.PreviewSurfaceCfg = sim_utils.PreviewSurfaceCfg(
+        diffuse_color=(0.42, 0.42, 0.42), roughness=0.95
+    )
+    physics_material: sim_utils.RigidBodyMaterialCfg = GROUND_MATERIAL_CFG
 
 
 @configclass
 class B2Z1RearVisionSceneCfg(B2Z1SceneCfg):
     """B2 built-in front/rear RGB-D and optional front-down D435i."""
 
+    # A compound collider belonging to the existing link_gun rigid body.
+    # Do not add a separate rigid body or mass: the trained URDF's 1 g tool
+    # link and fixed joints are retained, including the dummy_target TCP.
+    welding_gun = AssetBaseCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/link_gun/welding_gun",
+        spawn=sim_utils.CylinderCfg(
+            radius=WELDING_GUN_RADIUS_M,
+            height=WELDING_GUN_LENGTH_M,
+            axis="Z",
+            collision_props=sim_utils.CollisionPropertiesCfg(
+                collision_enabled=True, contact_offset=0.002, rest_offset=0.0,
+            ),
+            visual_material=sim_utils.PreviewSurfaceCfg(
+                diffuse_color=(0.65, 0.68, 0.72), metallic=0.8, roughness=0.3,
+            ),
+            physics_material=GROUND_MATERIAL_CFG,
+        ),
+        init_state=AssetBaseCfg.InitialStateCfg(
+            pos=(
+                WELDING_GUN_TIP_POSITION[0],
+                WELDING_GUN_TIP_POSITION[1],
+                WELDING_GUN_TIP_POSITION[2] + 0.5 * WELDING_GUN_LENGTH_M,
+            ),
+        ),
+    )
+
+    # Uniform illumination avoids the directional sun in the inherited HDR
+    # sky, whose robot silhouette was segmented as part of the crack.
+    sky_light = AssetBaseCfg(
+        prim_path="/World/skyLight",
+        spawn=sim_utils.DomeLightCfg(
+            intensity=750.0,
+            color=(1.0, 1.0, 1.0),
+            texture_file=None,
+        ),
+    )
+
     # A real 2 cm-wide, 5 cm-deep trench. The inherited base ground is lowered
-    # so its top is the trench bottom at z=-0.05 m. The central 40 m is split
-    # into short road slabs whose inner edges trace a gentle sinusoid. The
-    # remaining road stays straight and keeps platform edges outside the view.
+    # so its top is the trench bottom at z=-0.05 m. Two continuous meshes form
+    # the road surface and curved trench walls; this avoids visual seams that
+    # can be mistaken for a crack by the segmentation network.
     terrain = AssetBaseCfg(
         prim_path="/World/ground",
         spawn=sim_utils.CuboidCfg(
@@ -98,58 +223,16 @@ class B2Z1RearVisionSceneCfg(B2Z1SceneCfg):
         collision_group=-1,
     )
 
-    # Straight approach/exit slabs. The sinusoid is exactly y=0 at x=+-20 m,
-    # so these meet the curved section without a lateral discontinuity.
-    _outer_length = ROAD_HALF_LENGTH_M - CRACK_CURVE_HALF_LENGTH_M
-    road_before_left = _road_half_segment(
-        "RoadBeforeLeft", -0.5 * (ROAD_HALF_LENGTH_M + CRACK_CURVE_HALF_LENGTH_M),
-        _outer_length, 0.0, True
+    road_left = AssetBaseCfg(
+        prim_path="{ENV_REGEX_NS}/RoadLeft",
+        spawn=SeamlessCrackedRoadHalfCfg(left_side=True),
+        collision_group=-1,
     )
-    road_before_right = _road_half_segment(
-        "RoadBeforeRight", -0.5 * (ROAD_HALF_LENGTH_M + CRACK_CURVE_HALF_LENGTH_M),
-        _outer_length, 0.0, False
+    road_right = AssetBaseCfg(
+        prim_path="{ENV_REGEX_NS}/RoadRight",
+        spawn=SeamlessCrackedRoadHalfCfg(left_side=False),
+        collision_group=-1,
     )
-    road_after_left = _road_half_segment(
-        "RoadAfterLeft", 0.5 * (ROAD_HALF_LENGTH_M + CRACK_CURVE_HALF_LENGTH_M),
-        _outer_length, 0.0, True
-    )
-    road_after_right = _road_half_segment(
-        "RoadAfterRight", 0.5 * (ROAD_HALF_LENGTH_M + CRACK_CURVE_HALF_LENGTH_M),
-        _outer_length, 0.0, False
-    )
-
-    # 0.25 m segments make the physical trench gently wind by +/-12 cm. Each
-    # local cross-section still has exactly 2 cm opening and 5 cm depth.
-    _curve_segment_count = round(2.0 * CRACK_CURVE_HALF_LENGTH_M / CRACK_CURVE_SEGMENT_LENGTH_M)
-    for _segment_index in range(_curve_segment_count):
-        _segment_x = (
-            -CRACK_CURVE_HALF_LENGTH_M
-            + (_segment_index + 0.5) * CRACK_CURVE_SEGMENT_LENGTH_M
-        )
-        _crack_y = CRACK_CURVE_AMPLITUDE_M * math.sin(
-            2.0 * math.pi * _segment_x / CRACK_CURVE_WAVELENGTH_M
-        )
-        locals()[f"road_curve_left_{_segment_index:03d}"] = _road_half_segment(
-            f"RoadCurveLeft{_segment_index:03d}",
-            _segment_x,
-            CRACK_CURVE_SEGMENT_LENGTH_M,
-            _crack_y,
-            True,
-        )
-        locals()[f"road_curve_right_{_segment_index:03d}"] = _road_half_segment(
-            f"RoadCurveRight{_segment_index:03d}",
-            _segment_x,
-            CRACK_CURVE_SEGMENT_LENGTH_M,
-            _crack_y,
-            False,
-        )
-    # configclass treats every remaining class attribute as scene content.
-    # Remove loop temporaries so InteractiveScene only sees actual assets.
-    del _outer_length
-    del _curve_segment_count
-    del _segment_index
-    del _segment_x
-    del _crack_y
 
     # Built-in optical cameras. Their transforms come from joint_f_oc and
     # joint_r_oc in the B2 URDF, expressed directly relative to base_link so
@@ -236,6 +319,24 @@ class B2Z1RearVisionSceneCfg(B2Z1SceneCfg):
             convention="ros",
         ),
     )
+
+
+def _configure_vision_playback_cameras(env_cfg):
+    """Render the selected RGB-D stream at its export cadence during playback."""
+    command = env_cfg.commands.ee_target
+    selected = command.vision_camera_name
+    camera = getattr(env_cfg.scene, selected, None)
+    if camera is None or not {"rgb", "distance_to_image_plane"}.issubset(camera.data_types):
+        raise ValueError(f"Vision playback requires an RGB-D camera, got {selected!r}")
+    if os.environ.get("B2_Z1_VISION_ALL_CAMERAS", "0") != "1":
+        for name in ("front_rgb", "rear_rgb", "front_depth", "rear_depth", "d435i"):
+            if name != selected:
+                setattr(env_cfg.scene, name, None)
+    # Physics and policy stepping retain their trained rates. RTX only needs
+    # to render when the bridge publishes a frame; extra renders slow wall-
+    # clock motion without supplying any additional vision to the controller.
+    env_cfg.sim.render_interval = env_cfg.decimation * command.camera_export_period_steps
+    camera.update_period = env_cfg.sim.dt * env_cfg.sim.render_interval
 
 
 def _rear_command(mode: str, debug_vis: bool):
@@ -605,6 +706,152 @@ class B2Z1RearVisionV3GaitFineTuneAMPEnvCfg_Play(
 
 
 @configclass
+class RearCurveGaitHeadingV5RewardsCfg(RearVisionV3GaitFineTuneRewardsCfg):
+    """V5 rewards for straight heading retention and symmetric curved trot."""
+
+    straight_lateral_velocity = RewTerm(
+        func=mdp.path_straight_lateral_velocity_l2,
+        weight=-1.50,
+        params={
+            "path_command_name": "ee_target",
+            "velocity_command_name": "base_velocity",
+            "velocity_threshold": 0.10,
+            "asset_cfg": SceneEntityCfg("robot"),
+        },
+    )
+    straight_yaw_rate = RewTerm(
+        func=mdp.path_straight_yaw_rate_l2,
+        weight=-1.00,
+        params={
+            "path_command_name": "ee_target",
+            "velocity_command_name": "base_velocity",
+            "velocity_threshold": 0.10,
+            "asset_cfg": SceneEntityCfg("robot"),
+        },
+    )
+    straight_heading_drift = RewTerm(
+        func=mdp.path_straight_heading_drift_l2,
+        weight=-1.25,
+        params={
+            "path_command_name": "ee_target",
+            "velocity_command_name": "base_velocity",
+            "velocity_threshold": 0.10,
+            "asset_cfg": SceneEntityCfg("robot"),
+        },
+    )
+
+
+@configclass
+class B2Z1RearCurveGaitHeadingV5FineTuneAMPEnvCfg(
+    B2Z1RearVisionV3GaitFineTuneAMPEnvCfg
+):
+    """Mix straight paths and exact left/right arcs for deployment fine-tuning."""
+
+    rewards: RearCurveGaitHeadingV5RewardsCfg = RearCurveGaitHeadingV5RewardsCfg()
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        # Each environment receives either an exact straight path or a
+        # constant-curvature arc. The 40% straight share gives heading hold a
+        # strong, unambiguous training signal; the remaining paths split
+        # evenly between left and right turns with deployment-relevant radii.
+        self.commands.ee_target.synthetic_path_family = "straight_arc"
+        self.commands.ee_target.synthetic_straight_path_fraction = 0.40
+        self.commands.ee_target.synthetic_arc_radius_range_m = (6.0, 12.0)
+        self.commands.ee_target.synthetic_speed_range_mps = (0.22, 0.38)
+        self.commands.ee_target.resampling_time_range = (14.0, 20.0)
+
+        # Keep steering smooth enough for the physical platform while still
+        # covering the angular rate needed by a 6 m arc at 0.38 m/s.
+        self.commands.ee_target.path_lookahead_m = 0.90
+        self.commands.ee_target.cross_track_gain = 0.50
+        self.commands.ee_target.path_heading_gain = 0.90
+        self.commands.ee_target.max_yaw_rate_rps = 0.18
+        self.commands.ee_target.minimum_forward_tangent = 0.35
+        self.commands.ee_target.command_transition_time_s = 4.0
+        self.commands.ee_target.velocity_filter_time_constant_s = 0.40
+
+        # Improve the intermittent limp without forcing a rigid foot phase.
+        # AMP remains the dominant motion prior; these terms only bias the two
+        # diagonal pairs toward matching contact/air timing.
+        self.rewards.trot_diagonal_sync.weight = 0.60
+        self.rewards.air_time_variance.weight = -0.45
+        self.rewards.feet_height.weight = 0.30
+        self.rewards.track_lin_vel_xy.weight = 3.0
+        self.rewards.track_ang_vel_z.weight = 1.75
+
+
+@configclass
+class B2Z1RearCurveGaitHeadingV5FineTuneAMPEnvCfg_Visual(
+    B2Z1RearCurveGaitHeadingV5FineTuneAMPEnvCfg
+):
+    """32-environment visual validation of the V5 path distribution."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.num_envs = 32
+        self.commands.ee_target.debug_vis = True
+
+
+@configclass
+class B2Z1RearCurveGaitHeadingV5FineTuneAMPEnvCfg_Play(
+    B2Z1RearCurveGaitHeadingV5FineTuneAMPEnvCfg
+):
+    """V5 policy playback on a physical curved crack using live RGB-D vision."""
+
+    scene: B2Z1RearVisionSceneCfg = B2Z1RearVisionSceneCfg(
+        num_envs=1, env_spacing=4.0
+    )
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.num_envs = 1
+        self.episode_length_s = 3600.0
+        self.reference_state_initialization_prob = 0.0
+        # File mode exports the built-in front RGB-D stream and consumes the
+        # RHACrackNet trajectory JSON. Therefore neither the synthetic arc nor
+        # privileged curve geometry can influence playback.
+        self.commands.ee_target = _rear_command("file", debug_vis=True)
+        # Match the command dynamics seen in V5 synthetic training. The old
+        # visual defaults allowed 0.5 rad/s yaw and reached walking speed in
+        # less than a second, which can fold the rear legs at policy startup.
+        # Cruise inside the 0.22--0.38 m/s range seen by the V5 checkpoint.
+        self.commands.ee_target.path_speed_mps = 0.35
+        self.commands.ee_target.path_lookahead_m = 0.90
+        self.commands.ee_target.cross_track_gain = 0.50
+        self.commands.ee_target.path_heading_gain = 0.90
+        self.commands.ee_target.max_yaw_rate_rps = 0.18
+        self.commands.ee_target.command_transition_time_s = 4.0
+        self.commands.ee_target.velocity_filter_time_constant_s = 0.40
+        self.commands.base_velocity.curriculum_enabled = False
+        self.commands.base_velocity.rel_standing_envs = 0.0
+        self.events.physics_material = None
+        self.events.add_base_mass = None
+        self.events.base_com = None
+        self.events.actuator_gains = None
+        self.events.joint_dynamics = None
+        self.events.base_external_force_torque = None
+        self.events.push_robot = None
+        self.events.reset_base.params["pose_range"] = {
+            axis: (0.0, 0.0) for axis in ("x", "y", "roll", "pitch", "yaw")
+        }
+        self.events.reset_base.params["velocity_range"] = {
+            axis: (0.0, 0.0)
+            for axis in ("x", "y", "z", "roll", "pitch", "yaw")
+        }
+        self.events.reset_robot_joints.params["velocity_range"] = (0.0, 0.0)
+        self.terminations.bad_orientation = None
+        self.terminations.base_contact = None
+        self.rerender_on_reset = True
+        self.sim.render.antialiasing_mode = "DLAA"
+        self.sim.render.enable_dl_denoiser = True
+        self.sim.render.enable_shadows = False
+
+        _configure_vision_playback_cameras(self)
+
+
+@configclass
 class B2Z1RearDeploymentFineTuneAMPEnvCfg_Play(B2Z1RearDeploymentFineTuneAMPEnvCfg):
     """Deterministic nominal-stand playback for deployment checkpoint selection."""
 
@@ -725,4 +972,5 @@ class B2Z1RearVisionEnvCfg_Play(B2Z1RearSyntheticAMPEnvCfg):
         self.sim.render.antialiasing_mode = "DLAA"
         self.sim.render.enable_dl_denoiser = True
         self.sim.render.samples_per_pixel = 4
-        self.sim.render_interval = self.decimation
+        self.sim.render.enable_shadows = False
+        _configure_vision_playback_cameras(self)

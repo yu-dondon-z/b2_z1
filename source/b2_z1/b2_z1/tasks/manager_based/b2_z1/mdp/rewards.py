@@ -70,6 +70,70 @@ def straight_heading_drift_l2(
     error = math_utils.wrap_to_pi(asset.data.heading_w - target)
     return torch.square(error) * _heading_hold_mask(env, command_name).float()
 
+
+def _synthetic_straight_path_mask(
+    env: ManagerBasedRLEnv,
+    path_command_name: str,
+    velocity_command_name: str,
+    velocity_threshold: float,
+) -> torch.Tensor:
+    """Mask moving environments whose privileged training path is straight."""
+    path_term = env.command_manager.get_term(path_command_name)
+    straight = getattr(path_term, "is_straight_path", None)
+    if straight is None:
+        return torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+    command = env.command_manager.get_command(velocity_command_name)
+    moving = torch.linalg.norm(command[:, :2], dim=1) > velocity_threshold
+    return straight & moving
+
+
+def path_straight_lateral_velocity_l2(
+    env: ManagerBasedRLEnv,
+    path_command_name: str,
+    velocity_command_name: str = "base_velocity",
+    velocity_threshold: float = 0.10,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize side-slip only on explicitly sampled straight path segments."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    mask = _synthetic_straight_path_mask(
+        env, path_command_name, velocity_command_name, velocity_threshold
+    )
+    return torch.square(asset.data.root_lin_vel_b[:, 1]) * mask.float()
+
+
+def path_straight_yaw_rate_l2(
+    env: ManagerBasedRLEnv,
+    path_command_name: str,
+    velocity_command_name: str = "base_velocity",
+    velocity_threshold: float = 0.10,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize unintended turning while the sampled path is straight."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    mask = _synthetic_straight_path_mask(
+        env, path_command_name, velocity_command_name, velocity_threshold
+    )
+    return torch.square(asset.data.root_ang_vel_b[:, 2]) * mask.float()
+
+
+def path_straight_heading_drift_l2(
+    env: ManagerBasedRLEnv,
+    path_command_name: str,
+    velocity_command_name: str = "base_velocity",
+    velocity_threshold: float = 0.10,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize accumulated yaw drift relative to the straight path heading."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    path_term = env.command_manager.get_term(path_command_name)
+    target = getattr(path_term, "straight_heading_target", asset.data.heading_w)
+    mask = _synthetic_straight_path_mask(
+        env, path_command_name, velocity_command_name, velocity_threshold
+    )
+    error = math_utils.wrap_to_pi(asset.data.heading_w - target)
+    return torch.square(error) * mask.float()
+
 """
 Joint penalties.
 """

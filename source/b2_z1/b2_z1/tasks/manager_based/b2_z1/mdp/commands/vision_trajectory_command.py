@@ -51,6 +51,22 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         self._synthetic_amplitude = torch.zeros(self.num_envs, device=self.device)
         self._synthetic_wavenumber = torch.zeros(self.num_envs, device=self.device)
         self._synthetic_speed = torch.zeros(self.num_envs, device=self.device)
+        # Constant-curvature path state used by the V5 straight/arc task.
+        # A zero curvature is an exact straight line; non-zero values are
+        # signed so left and right turns share the same equations.
+        self._synthetic_curvature = torch.zeros(self.num_envs, device=self.device)
+        self._synthetic_path_origin_xy_w = torch.zeros(
+            self.num_envs, 2, device=self.device
+        )
+        self._synthetic_path_heading0_w = torch.zeros(
+            self.num_envs, device=self.device
+        )
+        self.is_straight_path = torch.ones(
+            self.num_envs, dtype=torch.bool, device=self.device
+        )
+        self.straight_heading_target = torch.zeros(
+            self.num_envs, device=self.device
+        )
         self._synthetic_tool_height = torch.full(
             (self.num_envs,), cfg.tool_height_m, device=self.device
         )
@@ -60,6 +76,7 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         self._command_transition_start_position_b = torch.zeros(
             self.num_envs, 3, device=self.device
         )
+        self._file_hold_position_b = torch.zeros(self.num_envs, 3, device=self.device)
         self._command_transition_start_velocity_b = torch.zeros(
             self.num_envs, 3, device=self.device
         )
@@ -70,6 +87,8 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         self._path_lateral_error_b = torch.zeros(self.num_envs, device=self.device)
         self._path_heading_error_b = torch.zeros(self.num_envs, device=self.device)
         self._camera_export_sequence = 0
+        self._status_previous_wall_time = None
+        self._status_previous_step = None
         self.metrics["vision_valid"] = torch.zeros(self.num_envs, device=self.device)
         self.metrics["cached_path_points"] = torch.zeros(self.num_envs, device=self.device)
         self.metrics["path_lateral_error"] = torch.zeros(
@@ -78,6 +97,14 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         self.metrics["path_heading_error"] = torch.zeros(
             self.num_envs, device=self.device
         )
+        self.metrics["straight_path"] = torch.zeros(self.num_envs, device=self.device)
+        self.metrics["path_curvature"] = torch.zeros(self.num_envs, device=self.device)
+        if not 0.0 <= cfg.synthetic_straight_path_fraction <= 1.0:
+            raise ValueError("synthetic_straight_path_fraction must be in [0, 1]")
+        if cfg.synthetic_arc_radius_range_m[0] <= 0.0:
+            raise ValueError("synthetic arc radii must be positive")
+        if cfg.synthetic_arc_radius_range_m[1] < cfg.synthetic_arc_radius_range_m[0]:
+            raise ValueError("synthetic_arc_radius_range_m must be ordered")
         if cfg.mode == "file" and self.num_envs != 1:
             raise ValueError("RearVisionTrajectoryCommand file mode requires scene.num_envs == 1")
 
@@ -111,6 +138,39 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
                 torch.rand(count, device=self.device) * (speed_range[1] - speed_range[0]) + speed_range[0]
             )
             self._synthetic_phase[env_ids] = torch.rand(count, device=self.device) * 2.0 * math.pi
+            if self.cfg.synthetic_path_family == "straight_arc":
+                base_pos_w = self.robot.data.body_pos_w[env_ids, self.base_idx]
+                base_heading_w = self.robot.data.heading_w[env_ids]
+                self._synthetic_path_origin_xy_w[env_ids] = base_pos_w[:, :2]
+                self._synthetic_path_heading0_w[env_ids] = base_heading_w
+                self.straight_heading_target[env_ids] = base_heading_w
+
+                straight = (
+                    torch.rand(count, device=self.device)
+                    < self.cfg.synthetic_straight_path_fraction
+                )
+                radius_range = self.cfg.synthetic_arc_radius_range_m
+                radius = (
+                    torch.rand(count, device=self.device)
+                    * (radius_range[1] - radius_range[0])
+                    + radius_range[0]
+                )
+                if self.cfg.synthetic_arc_direction == "left":
+                    turn_sign = torch.ones(count, device=self.device)
+                elif self.cfg.synthetic_arc_direction == "right":
+                    turn_sign = -torch.ones(count, device=self.device)
+                else:
+                    turn_sign = torch.where(
+                        torch.rand(count, device=self.device) < 0.5,
+                        -torch.ones(count, device=self.device),
+                        torch.ones(count, device=self.device),
+                    )
+                curvature = turn_sign / radius
+                curvature[straight] = 0.0
+                self._synthetic_curvature[env_ids] = curvature
+                self.is_straight_path[env_ids] = straight
+            else:
+                self.is_straight_path[env_ids] = False
             height_range = self.cfg.tool_height_range_m
             self._synthetic_tool_height[env_ids] = (
                 torch.rand(count, device=self.device)
@@ -123,6 +183,10 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
             self._latest_path_b = torch.empty((0, 3), device=self.device)
             self._vision_valid[env_ids] = False
         self._hold_current_tool_pose(env_ids)
+        # Capture once at reset. Re-sampling the measured TCP every policy
+        # step erases its tracking error and lets a learned arm bias move the
+        # command outside the trained workspace while waiting for rear points.
+        self._file_hold_position_b[env_ids] = self.pose_command[env_ids, :3]
         self._command_transition_start_position_b[env_ids] = self.pose_command[
             env_ids, :3
         ]
@@ -151,6 +215,8 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         self.metrics["path_heading_error"] = torch.abs(
             self._path_heading_error_b
         )
+        self.metrics["straight_path"][:] = self.is_straight_path.float()
+        self.metrics["path_curvature"][:] = torch.abs(self._synthetic_curvature)
 
     def _update_metrics(self):
         super()._update_metrics()
@@ -220,6 +286,9 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         """
         if not self.cfg.synthetic_world_fixed_path:
             self._update_legacy_synthetic_command()
+            return
+        if self.cfg.synthetic_path_family == "straight_arc":
+            self._update_straight_arc_synthetic_command()
             return
 
         dt = float(self.env.step_dt)
@@ -321,6 +390,115 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         self._set_pose_command_b(target_b)
         self._vision_valid[:] = True
 
+    @staticmethod
+    def _constant_curvature_xy_heading(
+        progress: torch.Tensor, curvature: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Evaluate a straight/constant-curvature path in its start frame."""
+        straight = torch.abs(curvature) < 1.0e-6
+        safe_curvature = torch.where(straight, torch.ones_like(curvature), curvature)
+        angle = curvature * progress
+        x = torch.sin(angle) / safe_curvature
+        y = (1.0 - torch.cos(angle)) / safe_curvature
+        x = torch.where(straight, progress, x)
+        y = torch.where(straight, torch.zeros_like(y), y)
+        return x, y, angle
+
+    def _update_straight_arc_synthetic_command(self):
+        """Follow exact straight lines and constant-radius left/right arcs."""
+        dt = float(self.env.step_dt)
+        base_pos_w = self.robot.data.body_pos_w[:, self.base_idx]
+        base_quat_w = self.robot.data.body_state_w[:, self.base_idx, 3:7]
+        base_heading_w = self.robot.data.heading_w
+
+        delta_w = base_pos_w[:, :2] - self._synthetic_path_origin_xy_w
+        heading0 = self._synthetic_path_heading0_w
+        cos0 = torch.cos(heading0)
+        sin0 = torch.sin(heading0)
+        local_x = cos0 * delta_w[:, 0] + sin0 * delta_w[:, 1]
+        local_y = -sin0 * delta_w[:, 0] + cos0 * delta_w[:, 1]
+
+        curvature = self._synthetic_curvature
+        straight = self.is_straight_path
+        # This is the exact closest-point phase for a circle through the path
+        # origin. For a line, progress is simply the local longitudinal axis.
+        circle_angle = torch.atan2(
+            curvature * local_x, 1.0 - curvature * local_y
+        )
+        safe_curvature = torch.where(straight, torch.ones_like(curvature), curvature)
+        progress = torch.where(straight, local_x, circle_angle / safe_curvature)
+        path_x, path_y, path_angle = self._constant_curvature_xy_heading(
+            progress, curvature
+        )
+        tangent_heading_w = wrap_to_pi(heading0 + path_angle)
+
+        path_point_x_w = self._synthetic_path_origin_xy_w[:, 0] + cos0 * path_x - sin0 * path_y
+        path_point_y_w = self._synthetic_path_origin_xy_w[:, 1] + sin0 * path_x + cos0 * path_y
+        to_path_x = path_point_x_w - base_pos_w[:, 0]
+        to_path_y = path_point_y_w - base_pos_w[:, 1]
+        lateral_error = (
+            -torch.sin(tangent_heading_w) * to_path_x
+            + torch.cos(tangent_heading_w) * to_path_y
+        )
+        tangent_heading_error = wrap_to_pi(tangent_heading_w - base_heading_w)
+        cross_track_heading = torch.atan2(
+            self.cfg.cross_track_gain * lateral_error,
+            torch.full_like(lateral_error, self.cfg.path_lookahead_m),
+        )
+        desired_heading_error = wrap_to_pi(
+            tangent_heading_error + cross_track_heading
+        )
+        alpha = self.cfg.path_heading_filter_alpha
+        self._filtered_path_heading = (
+            (1.0 - alpha) * self._filtered_path_heading
+            + alpha * desired_heading_error
+        )
+        self._path_lateral_error_b[:] = lateral_error
+        self._path_heading_error_b[:] = tangent_heading_error
+
+        desired_velocity_b = torch.zeros_like(self.base_velocity_command_b)
+        speed_scale = torch.cos(self._filtered_path_heading).clamp(0.60, 1.0)
+        desired_velocity_b[:, 0] = self._synthetic_speed * speed_scale
+        desired_velocity_b[:, 2] = (
+            self.cfg.path_heading_gain * self._filtered_path_heading
+        ).clamp(-self.cfg.max_yaw_rate_rps, self.cfg.max_yaw_rate_rps)
+
+        self._command_transition_elapsed += dt
+        duration = max(self.cfg.command_transition_time_s, dt)
+        blend = torch.clamp(self._command_transition_elapsed / duration, 0.0, 1.0)
+        blend = blend * blend * (3.0 - 2.0 * blend)
+        blended_velocity = self._command_transition_start_velocity_b + (
+            desired_velocity_b - self._command_transition_start_velocity_b
+        ) * blend.unsqueeze(1)
+        tau = max(self.cfg.velocity_filter_time_constant_s, dt)
+        velocity_alpha = 1.0 - math.exp(-dt / tau)
+        self._filtered_velocity_command_b += velocity_alpha * (
+            blended_velocity - self._filtered_velocity_command_b
+        )
+        self.base_velocity_command_b[:] = self._filtered_velocity_command_b
+
+        # The rear tool target is the same signed distance behind the closest
+        # path point, evaluated on the curve itself rather than along a chord.
+        rear_offset = sum(self.cfg.rear_work_x_range_m) * 0.5
+        target_progress = progress + rear_offset
+        target_x, target_y, _ = self._constant_curvature_xy_heading(
+            target_progress, curvature
+        )
+        target_w = torch.zeros_like(base_pos_w)
+        target_w[:, 0] = self._synthetic_path_origin_xy_w[:, 0] + cos0 * target_x - sin0 * target_y
+        target_w[:, 1] = self._synthetic_path_origin_xy_w[:, 1] + sin0 * target_x + cos0 * target_y
+        target_w[:, 2] = (
+            self.env.scene.env_origins[:, 2]
+            + self.cfg.synthetic_ground_height_w_m
+            + self._synthetic_tool_height
+        )
+        desired_target_b = quat_apply_inverse(base_quat_w, target_w - base_pos_w)
+        target_b = self._command_transition_start_position_b + (
+            desired_target_b - self._command_transition_start_position_b
+        ) * blend.unsqueeze(1)
+        self._set_pose_command_b(target_b)
+        self._vision_valid[:] = True
+
     def _update_legacy_synthetic_command(self):
         """Retain the original moving base-frame path for old task IDs."""
         self._synthetic_phase += (
@@ -360,6 +538,25 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
                 points_w.shape[:-1], math.inf,
                 device=points_w.device, dtype=points_w.dtype,
             )
+        if self.cfg.synthetic_path_family == "straight_arc":
+            origin = self._synthetic_path_origin_xy_w[:, None, :]
+            delta = points_w[..., :2] - origin
+            heading0 = self._synthetic_path_heading0_w[:, None]
+            cos0 = torch.cos(heading0)
+            sin0 = torch.sin(heading0)
+            local_x = cos0 * delta[..., 0] + sin0 * delta[..., 1]
+            local_y = -sin0 * delta[..., 0] + cos0 * delta[..., 1]
+            curvature = self._synthetic_curvature[:, None]
+            straight = torch.abs(curvature) < 1.0e-6
+            # Distance to the line y=0, or to the circle whose centre is
+            # (0, 1/k) in the path-start frame.
+            safe_curvature = torch.where(straight, torch.ones_like(curvature), curvature)
+            radius = 1.0 / torch.abs(safe_curvature)
+            circle_distance = torch.abs(
+                torch.sqrt(local_x * local_x + (local_y - 1.0 / safe_curvature).square())
+                - radius
+            )
+            return torch.where(straight, torch.abs(local_y), circle_distance)
         env_origins = self.env.scene.env_origins
         local_x = points_w[..., 0] - env_origins[:, None, 0]
         phase = (
@@ -547,6 +744,17 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         desired_velocity_b[0, 2] = (
             self.cfg.path_heading_gain * heading_error
         ).clamp(-self.cfg.max_yaw_rate_rps, self.cfg.max_yaw_rate_rps)
+        # File playback must use the same slow stand-to-walk handoff as
+        # synthetic training. A low-pass filter alone reaches most of the
+        # command in under one second and caused the observed immediate squat.
+        dt = float(self.env.step_dt)
+        self._command_transition_elapsed += dt
+        duration = max(self.cfg.command_transition_time_s, dt)
+        start_blend = torch.clamp(
+            self._command_transition_elapsed / duration, 0.0, 1.0
+        )
+        start_blend = start_blend * start_blend * (3.0 - 2.0 * start_blend)
+        desired_velocity_b *= start_blend.unsqueeze(1)
         self._filter_file_velocity_command(desired_velocity_b)
 
         base_pos_w = self.robot.data.body_pos_w[0, self.base_idx]
@@ -560,18 +768,18 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         cached_b = cached_b[keep]
         if len(cached_b) == 0:
             self._vision_valid[:] = False
-            self._hold_current_tool_pose()
+            self._hold_file_tool_pose()
             return
 
         rear_min, rear_max = self.cfg.rear_work_x_range_m
         reachable = (cached_b[:, 0] >= rear_min) & (cached_b[:, 0] <= rear_max)
         if not torch.any(reachable):
             # Continue moving along a fresh path until a detected point has
-            # physically passed into the rear workspace. Refresh the hold pose
-            # from the actual TCP every step: retaining an old world target
-            # makes that target drift behind the robot while it walks.
+            # physically passed into the rear workspace. Keep a fixed target
+            # relative to B2 so neither base motion nor actual TCP drift moves
+            # the waiting command. Rebuild its world pose from the current base.
             self._vision_valid[:] = False
-            self._hold_current_tool_pose()
+            self._hold_file_tool_pose()
             return
         candidates = torch.nonzero(reachable, as_tuple=False).flatten()
         desired_x = 0.5 * (rear_min + rear_max)
@@ -611,7 +819,12 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
             self.base_velocity_command_b.zero_()
             self._filtered_velocity_command_b.zero_()
             self._filtered_path_heading.zero_()
-            self._hold_current_tool_pose()
+            self._command_transition_elapsed.zero_()
+            self._hold_file_tool_pose()
+
+    def _hold_file_tool_pose(self):
+        """Hold the captured/last commanded body-relative target inside the workspace."""
+        self._set_pose_command_b(self._file_hold_position_b)
 
     def _set_file_pose_command_b_smooth(self, desired_position_b: torch.Tensor):
         """Move the visual TCP target continuously when it becomes available."""
@@ -625,6 +838,7 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
             max_step / delta_norm.clamp_min(1.0e-8), max=1.0
         )
         self._set_pose_command_b(self.pose_command[:, :3] + delta * step_scale)
+        self._file_hold_position_b[:] = self.pose_command[:, :3]
 
     def _write_controller_status(self):
         """Publish a low-rate diagnostic proving that WBC consumed vision."""
@@ -641,8 +855,22 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
             (actual_tool_pos_w - base_pos_w).unsqueeze(0),
         )[0]
         tool_error_b = self.pose_command[0, :3] - actual_tool_pos_b
+        now = time.monotonic()
+        step = self.env.common_step_counter
+        real_time_factor = None
+        if self._status_previous_wall_time is not None:
+            wall_elapsed = now - self._status_previous_wall_time
+            sim_elapsed = (step - self._status_previous_step) * float(self.env.step_dt)
+            if wall_elapsed > 0.0 and sim_elapsed > 0.0:
+                real_time_factor = sim_elapsed / wall_elapsed
+        self._status_previous_wall_time = now
+        self._status_previous_step = step
         payload = {
             "timestamp_ns": time.time_ns(),
+            "simulation_step": step,
+            "simulation_time_s": step * float(self.env.step_dt),
+            "real_time_factor": real_time_factor,
+            "base_linear_velocity_b": self.robot.data.root_lin_vel_b[0].detach().cpu().tolist(),
             "source_sequence_consumed": self._last_source_sequence,
             "trajectory_fresh": fresh,
             "trajectory_age_s": (
@@ -654,6 +882,10 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
             "latest_path_points": len(self._latest_path_b),
             "cached_world_points": len(self._cached_path_w),
             "base_velocity_command_b": self.base_velocity_command_b[0].detach().cpu().tolist(),
+            "base_position_w": base_pos_w.detach().cpu().tolist(),
+            "base_projected_gravity_b": (
+                self.robot.data.projected_gravity_b[0].detach().cpu().tolist()
+            ),
             "path_lateral_error_b_m": float(self._path_lateral_error_b[0].item()),
             "tool_target_position_b": self.pose_command[0, :3].detach().cpu().tolist(),
             "tool_actual_position_b": actual_tool_pos_b.detach().cpu().tolist(),
@@ -744,25 +976,53 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
             # Draw environment zero only. A marker set for every parallel
             # training environment would obscure the scene and slow the UI.
             marker_count = min(self.cfg.max_debug_path_markers, 96)
-            base_x_local = (
-                self.robot.data.body_pos_w[0, self.base_idx, 0]
-                - self.env.scene.env_origins[0, 0]
-            )
-            local_x = torch.linspace(
-                base_x_local - 2.0,
-                base_x_local + 5.0,
-                marker_count,
-                device=self.device,
-            )
             points_w = torch.empty((marker_count, 3), device=self.device)
-            points_w[:, 0] = self.env.scene.env_origins[0, 0] + local_x
-            points_w[:, 1] = self.env.scene.env_origins[0, 1] + (
-                self._synthetic_amplitude[0]
-                * torch.sin(
-                    self._synthetic_wavenumber[0] * local_x
-                    + self._synthetic_phase[0]
+            if self.cfg.synthetic_path_family == "straight_arc":
+                base_pos = self.robot.data.body_pos_w[0, self.base_idx, :2]
+                delta = base_pos - self._synthetic_path_origin_xy_w[0]
+                heading0 = self._synthetic_path_heading0_w[0]
+                cos0 = torch.cos(heading0)
+                sin0 = torch.sin(heading0)
+                local_x = cos0 * delta[0] + sin0 * delta[1]
+                local_y = -sin0 * delta[0] + cos0 * delta[1]
+                curvature = self._synthetic_curvature[0]
+                if bool(self.is_straight_path[0]):
+                    base_progress = local_x
+                else:
+                    base_progress = torch.atan2(
+                        curvature * local_x, 1.0 - curvature * local_y
+                    ) / curvature
+                progress = torch.linspace(
+                    base_progress - 2.0,
+                    base_progress + 5.0,
+                    marker_count,
+                    device=self.device,
                 )
-            )
+                curvature_batch = curvature.expand_as(progress)
+                path_x, path_y, _ = self._constant_curvature_xy_heading(
+                    progress, curvature_batch
+                )
+                points_w[:, 0] = self._synthetic_path_origin_xy_w[0, 0] + cos0 * path_x - sin0 * path_y
+                points_w[:, 1] = self._synthetic_path_origin_xy_w[0, 1] + sin0 * path_x + cos0 * path_y
+            else:
+                base_x_local = (
+                    self.robot.data.body_pos_w[0, self.base_idx, 0]
+                    - self.env.scene.env_origins[0, 0]
+                )
+                local_x = torch.linspace(
+                    base_x_local - 2.0,
+                    base_x_local + 5.0,
+                    marker_count,
+                    device=self.device,
+                )
+                points_w[:, 0] = self.env.scene.env_origins[0, 0] + local_x
+                points_w[:, 1] = self.env.scene.env_origins[0, 1] + (
+                    self._synthetic_amplitude[0]
+                    * torch.sin(
+                        self._synthetic_wavenumber[0] * local_x
+                        + self._synthetic_phase[0]
+                    )
+                )
             points_w[:, 2] = (
                 self.env.scene.env_origins[0, 2]
                 + self.cfg.synthetic_ground_height_w_m
@@ -888,6 +1148,10 @@ class RearVisionTrajectoryCommandCfg(UniformPoseWBCCommandCfg):
     tool_height_m: float = 0.10
     tool_height_range_m: tuple[float, float] = (0.10, 0.10)
     synthetic_world_fixed_path: bool = False
+    synthetic_path_family: Literal["sinusoid", "straight_arc"] = "sinusoid"
+    synthetic_straight_path_fraction: float = 0.35
+    synthetic_arc_radius_range_m: tuple[float, float] = (6.0, 12.0)
+    synthetic_arc_direction: Literal["both", "left", "right"] = "both"
     synthetic_ground_height_w_m: float = 0.0
     command_transition_time_s: float = 3.0
     velocity_filter_time_constant_s: float = 0.35

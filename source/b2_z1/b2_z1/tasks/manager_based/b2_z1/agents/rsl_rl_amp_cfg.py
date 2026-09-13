@@ -225,6 +225,19 @@ class AMPRearVisionV3GaitFineTuneRunnerCfg(AMP_PPORunnerCfg):
 
 
 @configclass
+class AMPRearCurveGaitHeadingV5FineTuneRunnerCfg(
+    AMPRearVisionV3GaitFineTuneRunnerCfg
+):
+    """Conservative continuation for mixed straight and curved paths."""
+
+    # Curves introduce a new state distribution, so allow a longer run while
+    # retaining V3's low learning rate, tight KL limit and bounded policy std.
+    max_iterations = 1200
+    save_interval = 100
+    experiment_name = "b2_z1_amp"
+
+
+@configclass
 class AMPProprioOmniV4FineTuneRunnerCfg(AMP_PPORunnerCfg):
     """Conservative omnidirectional continuation from V3 ``model_10000``."""
 

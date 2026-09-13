@@ -2,6 +2,7 @@
 """Validate B2 front/rear RGB-D and optional D435i camera outputs."""
 
 import argparse
+import os
 from pathlib import Path
 
 from isaaclab.app import AppLauncher
@@ -47,6 +48,8 @@ def _save_depth(path: Path, tensor: torch.Tensor) -> tuple[float, float]:
 def main() -> None:
     output = Path(args_cli.output).expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
+    # This diagnostic explicitly checks every sensor, unlike normal playback.
+    os.environ["B2_Z1_VISION_ALL_CAMERAS"] = "1"
     cfg = parse_env_cfg(
         "Unitree-b2z1-AMP-Rear-Vision-Play",
         device=args_cli.device,
