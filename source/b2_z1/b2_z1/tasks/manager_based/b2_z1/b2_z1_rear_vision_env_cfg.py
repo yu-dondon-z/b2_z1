@@ -852,6 +852,235 @@ class B2Z1RearCurveGaitHeadingV5FineTuneAMPEnvCfg_Play(
 
 
 @configclass
+class RealGaitClearanceV1RewardsCfg(RearCurveGaitHeadingV5RewardsCfg):
+    """Deployment-oriented gait rewards with an explicit sole-clearance floor."""
+
+    swing_foot_clearance_deficit = RewTerm(
+        func=mdp.swing_foot_clearance_deficit,
+        weight=-0.80,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
+            "asset_cfg": SceneEntityCfg("robot", body_names=".*_foot"),
+            "minimum_clearance": 0.055,
+            "foot_radius": 0.032,
+            "minimum_air_time": 0.04,
+            "velocity_threshold": 0.08,
+            "command_name": "base_velocity",
+        },
+    )
+
+
+@configclass
+class B2Z1RealGaitClearanceV1FineTuneAMPEnvCfg(
+    B2Z1RearCurveGaitHeadingV5FineTuneAMPEnvCfg
+):
+    """Fine-tune V5 for low-speed clearance and real actuator response."""
+
+    rewards: RealGaitClearanceV1RewardsCfg = RealGaitClearanceV1RewardsCfg()
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        # Include the physical test range instead of concentrating only on
+        # 0.22--0.38 m/s.  Standing samples preserve zero-command stability;
+        # the continuous moving range teaches a clean transition into trot.
+        self.commands.base_velocity.rel_standing_envs = 0.15
+        self.commands.ee_target.synthetic_speed_range_mps = (0.12, 0.38)
+        self.commands.ee_target.resampling_time_range = (14.0, 20.0)
+
+        # The selected V5 checkpoint under-tracks 0.30 m/s in simulation.
+        # Raise the tracking pressure moderately while retaining the AMP prior
+        # and smoothness terms that prevent an exaggerated high-stepping gait.
+        self.rewards.track_lin_vel_xy.weight = 3.75
+        self.rewards.feet_height.weight = 0.45
+        self.rewards.trot_diagonal_sync.weight = 0.65
+        self.rewards.air_time_variance.weight = -0.45
+        self.rewards.action_rate_l2.weight = -0.025
+        self.rewards.action_smoothness.weight = -0.025
+
+        # Randomize 0--10 ms of B2 leg-command latency (physics dt is 5 ms).
+        # The Z1 remains unchanged so this run targets the observed leg issue.
+        for actuator_name in ("M107-24-2", "2"):
+            actuator_cfg = self.scene.robot.actuators[actuator_name]
+            actuator_cfg.min_delay = 0
+            actuator_cfg.max_delay = 2
+
+
+@configclass
+class B2Z1RealGaitClearanceV1FineTuneAMPEnvCfg_Visual(
+    B2Z1RealGaitClearanceV1FineTuneAMPEnvCfg
+):
+    """Small-batch visual validation for the real-gait continuation."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.num_envs = 32
+        self.commands.ee_target.debug_vis = True
+
+
+@configclass
+class RealGaitClearanceV2RewardsCfg(RealGaitClearanceV1RewardsCfg):
+    """Gentler clearance shaping after the V1 tracking-regression audit."""
+
+    swing_foot_clearance_deficit = RewTerm(
+        func=mdp.swing_foot_clearance_deficit,
+        weight=-0.25,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
+            "asset_cfg": SceneEntityCfg("robot", body_names=".*_foot"),
+            "minimum_clearance": 0.045,
+            "foot_radius": 0.032,
+            "minimum_air_time": 0.04,
+            "velocity_threshold": 0.08,
+            "command_name": "base_velocity",
+        },
+    )
+
+
+@configclass
+class B2Z1RealGaitClearanceV2FineTuneAMPEnvCfg(
+    B2Z1RealGaitClearanceV1FineTuneAMPEnvCfg
+):
+    """Single-variable clearance continuation preserving the selected V5 gait."""
+
+    rewards: RealGaitClearanceV2RewardsCfg = RealGaitClearanceV2RewardsCfg()
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        # Restore V5's proven deployment range and actuator model.  V1 changed
+        # both of these together with clearance shaping and regressed velocity
+        # tracking, so V2 isolates the new sole-clearance signal.
+        self.commands.base_velocity.rel_standing_envs = 0.15
+        self.commands.ee_target.synthetic_speed_range_mps = (0.22, 0.38)
+        for actuator_name in ("M107-24-2", "2"):
+            actuator_cfg = self.scene.robot.actuators[actuator_name]
+            actuator_cfg.min_delay = 0
+            actuator_cfg.max_delay = 0
+
+        self.rewards.track_lin_vel_xy.weight = 3.25
+        self.rewards.feet_height.weight = 0.30
+        self.rewards.trot_diagonal_sync.weight = 0.60
+        self.rewards.air_time_variance.weight = -0.45
+        self.rewards.action_rate_l2.weight = -0.02
+        self.rewards.action_smoothness.weight = -0.02
+
+
+@configclass
+class B2Z1RealGaitClearanceV2FineTuneAMPEnvCfg_Visual(
+    B2Z1RealGaitClearanceV2FineTuneAMPEnvCfg
+):
+    """Small-batch visual validation for the isolated V2 continuation."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.num_envs = 32
+        self.commands.ee_target.debug_vis = True
+
+
+@configclass
+class RealGaitClearanceV3RewardsCfg(RearCurveGaitHeadingV5RewardsCfg):
+    """V5 rewards plus a small guard against very low swing-foot clearance."""
+
+    swing_foot_clearance_deficit = RewTerm(
+        func=mdp.swing_foot_clearance_deficit,
+        weight=-0.10,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
+            "asset_cfg": SceneEntityCfg("robot", body_names=".*_foot"),
+            "minimum_clearance": 0.040,
+            "foot_radius": 0.032,
+            "minimum_air_time": 0.04,
+            "velocity_threshold": 0.08,
+            "command_name": "base_velocity",
+        },
+    )
+
+
+@configclass
+class B2Z1RealGaitClearanceV3FineTuneAMPEnvCfg(
+    B2Z1RearCurveGaitHeadingV5FineTuneAMPEnvCfg
+):
+    """Minimal V5 continuation: lift reward only, with a clearance guard."""
+
+    rewards: RealGaitClearanceV3RewardsCfg = RealGaitClearanceV3RewardsCfg()
+
+    def __post_init__(self):
+        super().__post_init__()
+        # Preserve all selected V5 command, tracking, gait and actuator
+        # settings.  This is the only material reward-weight adjustment.
+        self.rewards.feet_height.weight = 0.45
+
+
+@configclass
+class B2Z1RealGaitClearanceV3FineTuneAMPEnvCfg_Visual(
+    B2Z1RealGaitClearanceV3FineTuneAMPEnvCfg
+):
+    """Small-batch visual validation for the minimal V3 continuation."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.num_envs = 32
+        self.commands.ee_target.debug_vis = True
+
+
+@configclass
+class B2Z1RealGaitClearanceV4HeadingRecoveryAMPEnvCfg(
+    B2Z1RealGaitClearanceV3FineTuneAMPEnvCfg
+):
+    """Short continuation that restores yaw tracking after clearance gains."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.rewards.track_ang_vel_z.weight = 2.25
+
+
+@configclass
+class B2Z1RealGaitClearanceV4HeadingRecoveryAMPEnvCfg_Visual(
+    B2Z1RealGaitClearanceV4HeadingRecoveryAMPEnvCfg
+):
+    """Small-batch visual validation for V4 heading recovery."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.num_envs = 32
+        self.commands.ee_target.debug_vis = True
+
+
+@configclass
+class B2Z1RealGaitClearanceV5StraightRecoveryAMPEnvCfg(
+    B2Z1RealGaitClearanceV3FineTuneAMPEnvCfg
+):
+    """Recover straight-line heading without disturbing the improved gait."""
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        # The physical validation is currently straight walking.  Increase
+        # the fraction of unambiguous straight paths while retaining enough
+        # left/right arcs to avoid forgetting the visual curve behavior.
+        self.commands.ee_target.synthetic_straight_path_fraction = 0.65
+
+        # Penalize drift only on straight paths.  This avoids the failed V4
+        # behavior where a global angular-velocity increase distorted curves.
+        self.rewards.straight_lateral_velocity.weight = -1.75
+        self.rewards.straight_yaw_rate.weight = -1.50
+        self.rewards.straight_heading_drift.weight = -1.75
+
+
+@configclass
+class B2Z1RealGaitClearanceV5StraightRecoveryAMPEnvCfg_Visual(
+    B2Z1RealGaitClearanceV5StraightRecoveryAMPEnvCfg
+):
+    """Small-batch visual validation for V5 straight recovery."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.num_envs = 32
+        self.commands.ee_target.debug_vis = True
+
+
+@configclass
 class B2Z1RearDeploymentFineTuneAMPEnvCfg_Play(B2Z1RearDeploymentFineTuneAMPEnvCfg):
     """Deterministic nominal-stand playback for deployment checkpoint selection."""
 

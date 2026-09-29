@@ -8,6 +8,7 @@
 """Launch Isaac Sim Simulator first."""
 
 import argparse
+import math
 import sys
 
 from isaaclab.app import AppLauncher
@@ -29,6 +30,37 @@ parser.add_argument(
 parser.add_argument("--seed", type=int, default=None, help="Seed used for the environment")
 parser.add_argument("--max_iterations", type=int, default=None, help="RL Policy training iterations.")
 parser.add_argument(
+    "--reset_leg_policy_std",
+    type=float,
+    default=None,
+    help="After loading a checkpoint, reset only the 12 leg-action exploration standard deviations.",
+)
+parser.add_argument(
+    "--freeze-arm-actor",
+    action="store_true",
+    help="Fine-tune only B2 action-head rows; freeze the actor trunk, six Z1 action rows and their noise.",
+)
+parser.add_argument(
+    "--arm-teacher-weight", type=float, default=0.0,
+    help="Distill six Z1 actor means from the resumed checkpoint while training the full-body actor.",
+)
+parser.add_argument(
+    "--leg-teacher-weight", type=float, default=0.0,
+    help="Preserve the resumed B2 trot, releasing most of this constraint for yaw commands.",
+)
+parser.add_argument(
+    "--teacher-checkpoint", type=str, default=None,
+    help="Load an independent frozen actor teacher without initializing the student from it.",
+)
+parser.add_argument(
+    "--initial-arm-policy-std", type=float, default=None,
+    help="Initial Z1 exploration std for a fresh student with an independent teacher.",
+)
+parser.add_argument(
+    "--leg-teacher-yaw-release", type=float, default=0.10,
+    help="Absolute yaw command where B2 teacher strength reaches its 20%% floor (rad/s).",
+)
+parser.add_argument(
     "--distributed", action="store_true", default=False, help="Run training with multiple GPUs or nodes."
 )
 parser.add_argument("--export_io_descriptors", action="store_true", default=False, help="Export IO descriptors.")
@@ -37,6 +69,17 @@ cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
 args_cli, hydra_args = parser.parse_known_args()
+
+if args_cli.teacher_checkpoint and not (args_cli.arm_teacher_weight or args_cli.leg_teacher_weight):
+    parser.error("--teacher-checkpoint requires a nonzero teacher loss weight")
+if args_cli.initial_arm_policy_std is not None:
+    if (not args_cli.teacher_checkpoint or args_cli.arm_teacher_weight <= 0.0
+            or not math.isfinite(args_cli.initial_arm_policy_std) or args_cli.initial_arm_policy_std <= 0.0):
+        parser.error("--initial-arm-policy-std requires an independent arm teacher and finite positive std")
+
+if args_cli.reset_leg_policy_std is not None:
+    if not math.isfinite(args_cli.reset_leg_policy_std) or args_cli.reset_leg_policy_std <= 0.0:
+        parser.error("--reset_leg_policy_std must be finite and positive")
 
 # always enable cameras to record video
 if args_cli.video:
@@ -206,6 +249,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # wrap around environment for rsl-rl
     env = AMPRslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
 
+    if args_cli.reset_leg_policy_std is not None and not agent_cfg.resume:
+        raise ValueError("--reset_leg_policy_std requires resuming a checkpoint")
+
     # create runner from rsl-rl
     runner = AMP_OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
     # write git state to logs
@@ -215,10 +261,125 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
         # load previously trained model
         runner.load(resume_path, load_optimizer=not args_cli.reset_optimizer)
+        if args_cli.reset_leg_policy_std is not None:
+            if args_cli.reset_leg_policy_std <= 0.0:
+                raise ValueError("--reset_leg_policy_std must be positive")
+            action_term = env.unwrapped.action_manager.get_term("JointPositionAction")
+            joint_names = action_term._joint_names
+            arm_names = {f"joint{index}" for index in range(1, 7)}
+            if not arm_names.issubset(joint_names) or runner.alg.policy.std.numel() != len(joint_names):
+                raise RuntimeError(f"Cannot resolve the 12 B2 action rows from {joint_names}")
+            leg_indices = [index for index, name in enumerate(joint_names) if name not in arm_names]
+            if len(leg_indices) != 12:
+                raise RuntimeError(f"Expected 12 B2 action rows, got {leg_indices}")
+            with torch.no_grad():
+                runner.alg.policy.std[leg_indices] = args_cli.reset_leg_policy_std
+            print(
+                "[INFO]: Reset leg exploration std to "
+                f"{args_cli.reset_leg_policy_std:.3f} on action rows {leg_indices}; "
+                "arm std and actor means are unchanged"
+            )
+
+    if args_cli.freeze_arm_actor:
+        if not agent_cfg.resume:
+            raise ValueError("--freeze-arm-actor requires --resume from an existing 18-action checkpoint")
+        policy = runner.alg.policy
+        actor = policy.actor
+        if not isinstance(actor[-1], torch.nn.Linear):
+            raise RuntimeError("--freeze-arm-actor requires a final Linear actor layer")
+        action_term = env.unwrapped.action_manager.get_term("JointPositionAction")
+        joint_names = action_term._joint_names
+        arm_names = [f"joint{index}" for index in range(1, 7)]
+        if actor[-1].out_features != len(joint_names) or any(name not in joint_names for name in arm_names):
+            raise RuntimeError(f"Cannot resolve all six Z1 actions from {joint_names}")
+        arm_indices = [joint_names.index(name) for name in arm_names]
+        leg_mask = torch.ones(actor[-1].out_features, device=actor[-1].weight.device)
+        leg_mask[arm_indices] = 0.0
+        for layer in list(actor.children())[:-1]:
+            for parameter in layer.parameters():
+                parameter.requires_grad_(False)
+        actor[-1].weight.register_hook(lambda grad: grad * leg_mask[:, None])
+        actor[-1].bias.register_hook(lambda grad: grad * leg_mask)
+        noise_parameter = getattr(policy, "std", None)
+        if noise_parameter is None:
+            noise_parameter = getattr(policy, "log_std", None)
+        if noise_parameter is None or noise_parameter.numel() != leg_mask.numel():
+            raise RuntimeError("Cannot resolve per-action policy noise for Z1 freezing")
+        noise_parameter.register_hook(lambda grad: grad * leg_mask)
+        print(
+            "[INFO]: Frozen actor trunk and Z1 output/noise rows; "
+            f"trainable B2 action rows={[i for i, value in enumerate(leg_mask.tolist()) if value > 0]}"
+        )
+
+    if args_cli.arm_teacher_weight or args_cli.leg_teacher_weight:
+        if (
+            not all(math.isfinite(value) for value in (
+                args_cli.arm_teacher_weight, args_cli.leg_teacher_weight, args_cli.leg_teacher_yaw_release
+            ))
+            or args_cli.arm_teacher_weight < 0.0
+            or args_cli.leg_teacher_weight < 0.0
+            or args_cli.leg_teacher_yaw_release <= 0.0
+            or (not agent_cfg.resume and not args_cli.teacher_checkpoint)
+            or args_cli.freeze_arm_actor
+        ):
+            raise ValueError("teacher weights require resume or --teacher-checkpoint, nonnegative weights, and no --freeze-arm-actor")
+        import copy
+
+        policy = runner.alg.policy
+        action_term = env.unwrapped.action_manager.get_term("JointPositionAction")
+        joint_names = action_term._joint_names
+        arm_names = [f"joint{index}" for index in range(1, 7)]
+        if any(name not in joint_names for name in arm_names):
+            raise RuntimeError(f"Cannot resolve all six Z1 actions from {joint_names}")
+        if not isinstance(policy.actor[-1], torch.nn.Linear) or policy.actor[-1].out_features != len(joint_names):
+            raise RuntimeError("Teacher action dimension does not match the action-manager joint order")
+        arm_indices = [joint_names.index(name) for name in arm_names]
+        teacher = copy.deepcopy(policy.actor).eval()
+        if args_cli.teacher_checkpoint:
+            teacher_path = os.path.abspath(os.path.expanduser(args_cli.teacher_checkpoint))
+            teacher_state = torch.load(teacher_path, map_location=runner.device, weights_only=False)
+            if runner.empirical_normalization or "obs_norm_state_dict" in teacher_state:
+                raise ValueError("Independent teacher currently requires unnormalized student and teacher observations")
+            actor_state = {
+                key[len("actor."):]: value
+                for key, value in teacher_state["model_state_dict"].items()
+                if key.startswith("actor.")
+            }
+            teacher.load_state_dict(actor_state, strict=True)
+            if not all(torch.isfinite(parameter).all() for parameter in teacher.parameters()):
+                raise ValueError("Teacher checkpoint has non-finite actor parameters")
+            print(f"[INFO]: Independent frozen teacher: {teacher_path}; student weights are not loaded from teacher")
+        if args_cli.initial_arm_policy_std is not None:
+            value = args_cli.initial_arm_policy_std
+            if agent_cfg.resume or not args_cli.teacher_checkpoint or not math.isfinite(value) or value <= 0:
+                raise ValueError("--initial-arm-policy-std requires a fresh student, independent teacher, and finite positive std")
+            with torch.no_grad():
+                policy.std[arm_indices] = value
+            print(f"[INFO]: Initial arm std={value} on action rows {arm_indices}")
+        teacher.requires_grad_(False)
+        runner.alg.arm_teacher_actor = teacher
+        runner.alg.arm_teacher_action_ids = arm_indices
+        runner.alg.arm_teacher_weight = args_cli.arm_teacher_weight
+        runner.alg.leg_teacher_action_ids = [
+            index for index in range(len(joint_names)) if index not in arm_indices
+        ]
+        runner.alg.leg_teacher_weight = args_cli.leg_teacher_weight
+        runner.alg.leg_teacher_yaw_release = args_cli.leg_teacher_yaw_release
+        if args_cli.arm_teacher_weight > 0.0 and agent_cfg.resume and not args_cli.teacher_checkpoint:
+            # Do not let exploration noise on the Z1 joints drift during tuning.
+            arm_mask = torch.ones_like(policy.std)
+            arm_mask[arm_indices] = 0.0
+            policy.std.register_hook(lambda grad: grad * arm_mask)
+        print(
+            "[INFO]: Distilling reference actor actions; "
+            f"Z1 weight={args_cli.arm_teacher_weight:.3f}, B2 weight={args_cli.leg_teacher_weight:.3f}, "
+            f"yaw release={args_cli.leg_teacher_yaw_release:.3f}, Z1 rows={arm_indices}"
+        )
 
     # dump the configuration into log-directory
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
     dump_yaml(os.path.join(log_dir, "params", "agent.yaml"), agent_cfg)
+    dump_yaml(os.path.join(log_dir, "params", "training_cli.yaml"), vars(args_cli))
     dump_pickle(os.path.join(log_dir, "params", "env.pkl"), env_cfg)
     dump_pickle(os.path.join(log_dir, "params", "agent.pkl"), agent_cfg)
 

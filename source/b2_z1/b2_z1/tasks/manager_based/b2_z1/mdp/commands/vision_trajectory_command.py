@@ -47,6 +47,8 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         self._last_vision_wall_time = -math.inf
         self._cached_path_w = torch.empty((0, 3), device=self.device)
         self._latest_path_b = torch.empty((0, 3), device=self.device)
+        self._latest_path_w = torch.empty((0, 3), device=self.device)
+        self._vision_generation = 0
         self._synthetic_phase = torch.zeros(self.num_envs, device=self.device)
         self._synthetic_amplitude = torch.zeros(self.num_envs, device=self.device)
         self._synthetic_wavenumber = torch.zeros(self.num_envs, device=self.device)
@@ -181,6 +183,9 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         else:
             self._cached_path_w = torch.empty((0, 3), device=self.device)
             self._latest_path_b = torch.empty((0, 3), device=self.device)
+            self._latest_path_w = torch.empty((0, 3), device=self.device)
+            self._vision_generation += 1
+            self._last_vision_wall_time = -math.inf
             self._vision_valid[env_ids] = False
         self._hold_current_tool_pose(env_ids)
         # Capture once at reset. Re-sampling the measured TCP every policy
@@ -590,6 +595,8 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
             payload = json.loads(path.read_text(encoding="utf-8"))
             if payload.get("frame_id", "b2_base") != "b2_base":
                 raise ValueError("vision trajectory frame_id must be 'b2_base'")
+            if self.cfg.use_capture_pose and payload.get("capture_generation") != self._vision_generation:
+                return
             points = torch.as_tensor(
                 payload["control_waypoints_robot_xyz"], device=self.device, dtype=torch.float32
             ).reshape(-1, 3)
@@ -602,7 +609,21 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
 
         base_pos_w = self.robot.data.body_pos_w[0, self.base_idx]
         base_quat_w = self.robot.data.body_state_w[0, self.base_idx, 3:7]
-        points_w = base_pos_w.unsqueeze(0) + quat_apply(base_quat_w.unsqueeze(0).expand(len(points), -1), points)
+        capture_pos_w, capture_quat_w = base_pos_w, base_quat_w
+        if self.cfg.use_capture_pose:
+            try:
+                capture_pos_w = torch.as_tensor(payload["capture_base_position_w"], device=self.device, dtype=torch.float32).reshape(3)
+                capture_quat_w = torch.as_tensor(payload["capture_base_quaternion_wxyz"], device=self.device, dtype=torch.float32).reshape(4)
+                if not torch.isfinite(capture_pos_w).all() or not torch.isfinite(capture_quat_w).all():
+                    return
+                norm = torch.linalg.norm(capture_quat_w)
+                if norm < 1.0e-6:
+                    return
+                capture_quat_w = capture_quat_w / norm
+            except (KeyError, TypeError, ValueError, RuntimeError):
+                return
+        points_w = capture_pos_w.unsqueeze(0) + quat_apply(capture_quat_w.unsqueeze(0).expand(len(points), -1), points)
+        self._latest_path_w = points_w
         self._latest_path_b = points
         self._last_source_sequence = int(payload.get("source_sequence", -1))
         self._merge_world_points(points_w)
@@ -678,6 +699,17 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
             "camera_quaternion_b_ros_wxyz": list(camera.cfg.offset.rot),
             "coordinate_convention": "b2_base: x forward, y left, z up; ROS optical: z forward, x right, y down",
         }
+        if self.cfg.use_capture_pose:
+            # VA15 aligns rendering and export at control-step boundaries.
+            # Read PhysX here, before asynchronous inference: camera USD pose
+            # queries can remain at the initial transform when Fabric is used.
+            capture_p = self.robot.data.body_pos_w[0, self.base_idx]
+            capture_q = self.robot.data.body_state_w[0, self.base_idx, 3:7]
+            metadata.update(
+                capture_base_position_w=capture_p.detach().cpu().tolist(),
+                capture_base_quaternion_wxyz=capture_q.detach().cpu().tolist(),
+                capture_generation=self._vision_generation,
+            )
         metadata_tmp = exchange_dir / ".latest_frame.tmp.json"
         metadata_tmp.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
         os.replace(metadata_tmp, exchange_dir / "latest_frame.json")
@@ -698,6 +730,13 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
 
     def _update_file_command(self):
         self._path_lateral_error_b.zero_()
+        if self.cfg.use_capture_pose and len(self._latest_path_w):
+            current_pos = self.robot.data.body_pos_w[0, self.base_idx]
+            current_quat = self.robot.data.body_state_w[0, self.base_idx, 3:7]
+            self._latest_path_b = quat_apply_inverse(
+                current_quat.unsqueeze(0).expand(len(self._latest_path_w), -1),
+                self._latest_path_w - current_pos.unsqueeze(0),
+            )
         fresh = time.monotonic() - self._last_vision_wall_time <= self.cfg.stale_timeout_s
         if not fresh or len(self._latest_path_b) < self.cfg.minimum_path_points:
             self._handle_file_command_loss()
@@ -785,7 +824,12 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         desired_x = 0.5 * (rear_min + rear_max)
         index = candidates[torch.argmin(torch.abs(cached_b[candidates, 0] - desired_x))]
         target_b = cached_b[index].clone()
-        target_b[2] += self.cfg.tool_height_m
+        if self.cfg.use_capture_pose:
+            target_w = self._cached_path_w[index].clone()
+            target_w[2] += self.cfg.tool_height_m + self.cfg.file_surface_offset_m
+            target_b = quat_apply_inverse(base_quat_w.unsqueeze(0), (target_w - base_pos_w).unsqueeze(0))[0]
+        else:
+            target_b[2] += self.cfg.tool_height_m
         self._set_file_pose_command_b_smooth(target_b.unsqueeze(0))
         self._vision_valid[:] = True
 
@@ -896,6 +940,9 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         temporary = exchange_dir / f".latest_controller_status.{os.getpid()}.tmp.json"
         temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         os.replace(temporary, target)
+        if self.cfg.use_capture_pose:
+            with (exchange_dir / "controller_history.jsonl").open("a", encoding="utf-8") as stream:
+                stream.write(json.dumps(payload) + "\n")
 
     def _set_debug_vis_impl(self, debug_vis: bool):
         if debug_vis:
@@ -1139,6 +1186,8 @@ class RearVisionTrajectoryCommandCfg(UniformPoseWBCCommandCfg):
 
     class_type: type = RearVisionTrajectoryCommand
     mode: Literal["synthetic", "file"] = "synthetic"
+    use_capture_pose: bool = False
+    file_surface_offset_m: float = 0.0
     trajectory_file: str = ""
     vision_camera_name: str = "front_depth"
     vision_exchange_directory: str = "/tmp/b2_z1_vision_bridge"

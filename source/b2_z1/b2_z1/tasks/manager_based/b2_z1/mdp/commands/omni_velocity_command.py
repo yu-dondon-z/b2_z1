@@ -38,12 +38,18 @@ class OmniVelocityCommand(UniformVelocityCommand):
             raise ValueError("Omnidirectional command fractions must be non-negative.")
         if abs(sum(probs) - 1.0) > 1.0e-6:
             raise ValueError(f"Omnidirectional command fractions must sum to 1.0, got {sum(probs):.6f}.")
+        if cfg.longitudinal_forward_fraction is not None and not (
+            0.0 <= cfg.longitudinal_forward_fraction <= 1.0
+        ):
+            raise ValueError("longitudinal_forward_fraction must lie in [0, 1].")
 
         self.is_longitudinal_env = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         self.is_lateral_env = torch.zeros_like(self.is_longitudinal_env)
         self.is_yaw_env = torch.zeros_like(self.is_longitudinal_env)
         self.is_mixed_env = torch.zeros_like(self.is_longitudinal_env)
         self.is_heading_hold_env = torch.zeros_like(self.is_longitudinal_env)
+        self.is_forward_env = torch.zeros_like(self.is_longitudinal_env)
+        self.is_backward_env = torch.zeros_like(self.is_longitudinal_env)
         self.straight_heading_target = torch.zeros(self.num_envs, device=self.device)
 
     def __str__(self) -> str:
@@ -82,6 +88,36 @@ class OmniVelocityCommand(UniformVelocityCommand):
             values[small] = -minimum
         return values.clamp(min=low, max=high)
 
+    def _sample_longitudinal(self, count: int) -> torch.Tensor:
+        """Sample longitudinal speed with an optional explicit sign ratio."""
+        forward_fraction = self.cfg.longitudinal_forward_fraction
+        if forward_fraction is None:
+            return self._sample_nonzero(
+                count, self.cfg.ranges.lin_vel_x, self.cfg.minimum_linear_speed
+            )
+
+        low, high = self.cfg.ranges.lin_vel_x
+        minimum = self.cfg.minimum_linear_speed
+        forward_available = high >= minimum
+        backward_available = low <= -minimum
+        if not (forward_available or backward_available):
+            return torch.zeros(count, device=self.device)
+
+        choose_forward = torch.rand(count, device=self.device) < forward_fraction
+        if not forward_available:
+            choose_forward[:] = False
+        if not backward_available:
+            choose_forward[:] = True
+
+        values = torch.empty(count, device=self.device)
+        forward_count = int(choose_forward.sum().item())
+        backward_count = count - forward_count
+        if forward_count:
+            values[choose_forward] = torch.empty(forward_count, device=self.device).uniform_(minimum, high)
+        if backward_count:
+            values[~choose_forward] = torch.empty(backward_count, device=self.device).uniform_(low, -minimum)
+        return values
+
     def _resample_command(self, env_ids: Sequence[int]):
         if len(env_ids) == 0:
             return
@@ -105,7 +141,7 @@ class OmniVelocityCommand(UniformVelocityCommand):
         self.is_mixed_env[env_ids] = mixed
 
         self.vel_command_b[env_ids] = 0.0
-        sampled_x = self._sample_nonzero(count, self.cfg.ranges.lin_vel_x, self.cfg.minimum_linear_speed)
+        sampled_x = self._sample_longitudinal(count)
         sampled_y = self._sample_nonzero(count, self.cfg.ranges.lin_vel_y, self.cfg.minimum_linear_speed)
         sampled_yaw = self._sample_nonzero(count, self.cfg.ranges.ang_vel_z, self.cfg.minimum_yaw_rate)
 
@@ -119,6 +155,8 @@ class OmniVelocityCommand(UniformVelocityCommand):
         standing = torch.rand(count, device=self.device) <= self.cfg.rel_standing_envs
         self.is_standing_env[env_ids] = standing
         self.is_heading_hold_env[env_ids] = (longitudinal | lateral) & ~standing
+        self.is_forward_env[env_ids] = longitudinal & (sampled_x > 0.0) & ~standing
+        self.is_backward_env[env_ids] = longitudinal & (sampled_x < 0.0) & ~standing
         self.straight_heading_target[env_ids] = self.robot.data.heading_w[env_ids]
 
     def _update_command(self):
@@ -151,3 +189,4 @@ class OmniVelocityCommandCfg(UniformVelocityCommandCfg):
     minimum_linear_speed: float = 0.10
     minimum_yaw_rate: float = 0.10
     heading_hold_stiffness: float = 1.25
+    longitudinal_forward_fraction: float | None = None

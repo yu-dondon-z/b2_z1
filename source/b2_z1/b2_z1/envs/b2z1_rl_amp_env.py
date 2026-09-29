@@ -1,8 +1,5 @@
-import torch
-from typing import Dict, Any
-from isaaclab.envs import ManagerBasedRLEnv
-
-
+import os
+import numpy as np
 import torch
 from typing import Dict, Any
 from isaaclab.envs import ManagerBasedRLEnv
@@ -14,7 +11,7 @@ from b2_z1.rsl_rl.datasets import AMPLoader
 
 
 class B2Z1ManagerAMPBasedRLEnv(ManagerBasedRLEnv):
-    
+
     def __init__(self, cfg, render_mode: str | None = None, **kwargs) -> None:
         """Initialize the HimLoco environment.
         
@@ -141,18 +138,20 @@ class B2Z1ManagerAMPBasedRLEnv(ManagerBasedRLEnv):
                 robot = self.scene['robot']
                 
                 if prob >= 1.0:
-                    frames = self.amp_loader.get_full_frame_batch(len(reset_env_ids))
+                    frames = self._sample_amp_reset_frames(reset_env_ids)
                     self._reset_dofs_amp(reset_env_ids, frames, robot)
                     self._reset_root_states_amp(reset_env_ids, frames, robot)
+                    self._seed_amp_action_filter(reset_env_ids, frames, robot)
                     amp_override_env_ids = reset_env_ids
                 elif (prob > 0.0 and prob < 1.0):
                     use_ref = torch.rand(len(reset_env_ids), device=self.device) < prob
                     ref_env_ids = reset_env_ids[use_ref]
                     # default_env_ids = reset_env_ids[~use_ref]
                     if len(ref_env_ids) > 0:
-                        frames = self.amp_loader.get_full_frame_batch(len(ref_env_ids))
+                        frames = self._sample_amp_reset_frames(ref_env_ids)
                         self._reset_dofs_amp(ref_env_ids, frames, robot)
                         self._reset_root_states_amp(ref_env_ids, frames, robot)
+                        self._seed_amp_action_filter(ref_env_ids, frames, robot)
                         amp_override_env_ids = ref_env_ids
   
                 
@@ -195,6 +194,54 @@ class B2Z1ManagerAMPBasedRLEnv(ManagerBasedRLEnv):
     
     
     ####
+
+    def _sample_amp_reset_frames(self, env_ids: torch.Tensor) -> torch.Tensor:
+        """Sample AMP frames, optionally matching each environment command.
+
+        The legacy behavior samples a motion independently from the velocity
+        command.  That is retained unless the task explicitly enables
+        ``command_conditioned_reference_initialization``.  Direction-matched
+        resets prevent the task reward from requesting one direction while
+        the discriminator/reference state presents another.
+        """
+        if not getattr(self.cfg, "command_conditioned_reference_initialization", False):
+            return self.amp_loader.get_full_frame_batch(len(env_ids))
+
+        command_term = self.command_manager.get_term("base_velocity")
+        command = command_term.command[env_ids]
+        trajectory_by_name = {
+            os.path.basename(path): index
+            for index, path in enumerate(self.amp_loader.trajectory_names)
+        }
+        required = {
+            "b2_stance",
+            "b2_forward",
+            "b2_backward",
+            "b2_left",
+            "b2_right",
+            "b2_turn_left",
+            "b2_turn_right",
+        }
+        missing = sorted(required - trajectory_by_name.keys())
+        if missing:
+            raise RuntimeError(f"Missing command-conditioned AMP motions: {missing}")
+
+        trajectory_ids = []
+        command_cpu = command.detach().cpu()
+        for vx, vy, wz in command_cpu.tolist():
+            if max(abs(vx), abs(vy), abs(wz)) < 1.0e-4:
+                motion = "b2_stance"
+            elif abs(wz) >= max(abs(vx), abs(vy)):
+                motion = "b2_turn_left" if wz >= 0.0 else "b2_turn_right"
+            elif abs(vy) >= abs(vx):
+                motion = "b2_left" if vy >= 0.0 else "b2_right"
+            else:
+                motion = "b2_forward" if vx >= 0.0 else "b2_backward"
+            trajectory_ids.append(trajectory_by_name[motion])
+
+        trajectory_ids = np.asarray(trajectory_ids, dtype=np.int64)
+        times = self.amp_loader.traj_time_sample_batch(trajectory_ids)
+        return self.amp_loader.get_full_frame_at_time_batch(trajectory_ids, times)
     
     def _reset_dofs_amp(self, reset_env_ids: torch.Tensor, frames: torch.Tensor, robot):
         """Reset the DOFs of the specified environments to the given frames.
@@ -209,6 +256,61 @@ class B2Z1ManagerAMPBasedRLEnv(ManagerBasedRLEnv):
         robot.write_joint_state_to_sim(
             dof_pos, dof_vel, joint_ids=self.data_joint_ids, env_ids=reset_env_ids
         )
+
+    def _seed_amp_action_filter(self, reset_env_ids: torch.Tensor, frames: torch.Tensor, robot):
+        """Make an AMP pose coherent with the filtered position action state.
+
+        ``FilteredJointPositionAction.reset`` clears its EMA state.  If the
+        articulation is subsequently overwritten with an expert gait frame,
+        the first policy step otherwise blends from a zero/default target and
+        immediately pulls the legs away from the reference pose.  This was
+        especially harmful for command-conditioned acquisition resets.
+
+        Keep the legacy reset contract unchanged for existing tasks.  The
+        seeding is enabled only by the opt-in command-conditioned reference
+        initialization used by the new omnidirectional acquisition stages.
+        """
+        if not getattr(self.cfg, "command_conditioned_reference_initialization", False):
+            return
+
+        action_term = self.action_manager.get_term("JointPositionAction")
+        leg_count = self.amp_loader.JOINT_POS_SIZE
+        data_to_lab = torch.as_tensor(
+            [0, 3, 6, 9, 1, 4, 7, 10, 2, 5, 8, 11],
+            device=self.device,
+            dtype=torch.long,
+        )
+        joint_pos_lab = self.amp_loader.get_joint_pose_batch(frames)[:, data_to_lab]
+        scale = action_term._scale
+        if isinstance(scale, torch.Tensor):
+            if scale.ndim == 0:
+                scale = scale.item()
+            elif scale.ndim == 1:
+                scale = scale[:leg_count]
+            else:
+                scale = scale[reset_env_ids, :leg_count]
+        offset = action_term._offset
+        if offset.ndim == 1:
+            offset = offset[:leg_count]
+        else:
+            offset = offset[reset_env_ids, :leg_count]
+        leg_actions = (joint_pos_lab - offset) / scale
+
+        # Seed both the filter's applied-action state and the observation's
+        # previous raw action.  Arm entries remain zero/default so the mature
+        # rear-TCP branch is not supplied with fabricated expert arm motion.
+        action_term._raw_actions[reset_env_ids] = 0.0
+        action_term._raw_actions[reset_env_ids, :leg_count] = leg_actions
+        default_targets = action_term._offset
+        if default_targets.ndim == 1:
+            action_term._processed_actions[reset_env_ids] = default_targets
+        else:
+            action_term._processed_actions[reset_env_ids] = default_targets[reset_env_ids]
+        action_term._processed_actions[reset_env_ids, :leg_count] = joint_pos_lab
+        self.action_manager._action[reset_env_ids] = 0.0
+        self.action_manager._prev_action[reset_env_ids] = 0.0
+        self.action_manager._action[reset_env_ids, :leg_count] = leg_actions
+        self.action_manager._prev_action[reset_env_ids, :leg_count] = leg_actions
         
         
         
@@ -233,4 +335,3 @@ class B2Z1ManagerAMPBasedRLEnv(ManagerBasedRLEnv):
         lin_vel_w = quat_apply(root_rot_wxyz, AMPLoader.get_linear_vel_batch(frames))
         ang_vel_w = quat_apply(root_rot_wxyz, AMPLoader.get_angular_vel_batch(frames))
         robot.write_root_velocity_to_sim(torch.cat([lin_vel_w, ang_vel_w], dim=-1), env_ids=reset_env_ids)
-    

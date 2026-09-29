@@ -36,6 +36,150 @@ def _longitudinal_mask(env: ManagerBasedRLEnv, command_name: str) -> torch.Tenso
     return mask & ~command_term.is_standing_env
 
 
+def command_mode_lin_vel_xy_l2(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    mode_attribute: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Return planar velocity error only for a named structured-command mode."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    command_term = env.command_manager.get_term(command_name)
+    mask = getattr(command_term, mode_attribute, None)
+    if mask is None:
+        return torch.zeros(env.num_envs, device=env.device)
+    command = env.command_manager.get_command(command_name)
+    error = torch.sum(torch.square(command[:, :2] - asset.data.root_lin_vel_b[:, :2]), dim=1)
+    return error * mask.float()
+
+
+def command_mode_ang_vel_z_l2(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    mode_attribute: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Return yaw-rate error only for a named structured-command mode."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    command_term = env.command_manager.get_term(command_name)
+    mask = getattr(command_term, mode_attribute, None)
+    if mask is None:
+        return torch.zeros(env.num_envs, device=env.device)
+    command = env.command_manager.get_command(command_name)
+    error = torch.square(command[:, 2] - asset.data.root_ang_vel_b[:, 2])
+    return error * mask.float()
+
+
+def commanded_lin_vel_xy_l2(
+    env: ManagerBasedRLEnv,
+    command_name: str = "base_velocity",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Return planar command-tracking error for every environment.
+
+    Unlike :func:`command_mode_lin_vel_xy_l2`, this term does not depend on a
+    command implementation exposing mode masks.  The truth-curve task derives
+    its velocity command from the path tangent, so the generic form is needed
+    to make standing still under a moving command explicitly costly.
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    command = env.command_manager.get_command(command_name)
+    return torch.sum(
+        torch.square(command[:, :2] - asset.data.root_lin_vel_b[:, :2]), dim=1
+    )
+
+
+def moving_leg_posture_deviation_hinge(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg,
+    command_name: str = "base_velocity",
+    velocity_threshold: float = 0.08,
+    allowed_mean_deviation: float = 0.08,
+    deviation_scale: float = 0.15,
+) -> torch.Tensor:
+    """Penalize a collapsed leg posture without suppressing a normal trot.
+
+    The mean absolute deviation is measured from the nominal standing pose. A
+    hinge leaves small excursions of the selected V19 gait unpenalized, while
+    normalized quadratic growth makes a persistent crouch expensive. The term
+    is disabled for standing commands so it does not fight zero-speed rewards.
+    """
+    if allowed_mean_deviation < 0.0:
+        raise ValueError("allowed_mean_deviation cannot be negative")
+    if deviation_scale <= 0.0:
+        raise ValueError("deviation_scale must be positive")
+
+    asset: Articulation = env.scene[asset_cfg.name]
+    deviation = torch.abs(
+        asset.data.joint_pos[:, asset_cfg.joint_ids]
+        - asset.data.default_joint_pos[:, asset_cfg.joint_ids]
+    ).mean(dim=1)
+    excess = torch.clamp(
+        (deviation - allowed_mean_deviation) / deviation_scale,
+        min=0.0,
+        max=1.0,
+    )
+    command = env.command_manager.get_command(command_name)
+    moving = torch.linalg.vector_norm(command[:, :2], dim=1) > velocity_threshold
+    return torch.square(excess) * moving.float()
+
+
+def moving_body_height_below_penalty(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg,
+    minimum_height: float,
+    height_scale: float = 0.05,
+    command_name: str = "base_velocity",
+    velocity_threshold: float = 0.08,
+) -> torch.Tensor:
+    """Penalize leg links whose centres approach the flat training ground.
+
+    VA2 kept the base high while folding its legs outward, so base-height and
+    contact-only checks missed the kneeling failure. VA truth-curve training
+    uses a flat plane, making each environment origin's z the local ground.
+    """
+    if minimum_height <= 0.0:
+        raise ValueError("minimum_height must be positive")
+    if height_scale <= 0.0:
+        raise ValueError("height_scale must be positive")
+
+    asset: Articulation = env.scene[asset_cfg.name]
+    ground_z = env.scene.env_origins[:, 2].unsqueeze(1)
+    body_height = asset.data.body_pos_w[:, asset_cfg.body_ids, 2] - ground_z
+    deficit = torch.clamp(
+        (minimum_height - body_height) / height_scale,
+        min=0.0,
+        max=1.0,
+    )
+    command = env.command_manager.get_command(command_name)
+    moving = torch.linalg.vector_norm(command[:, :2], dim=1) > velocity_threshold
+    return torch.mean(torch.square(deficit), dim=1) * moving.float()
+
+
+def commanded_along_path_speed_ratio(
+    env: ManagerBasedRLEnv,
+    command_name: str = "base_velocity",
+    velocity_threshold: float = 0.05,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Reward actual progress along the commanded planar direction.
+
+    Moving environments receive ``clamp(v_actual_along / v_command, 0, 1)``.
+    Therefore a stationary policy gets zero even when its TCP and posture are
+    perfect, while overspeed cannot exploit the reward.  True standing
+    commands receive one so the term does not destabilize zero-speed samples.
+    The bounded score is also used as an unambiguous curriculum gate.
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    command_xy = env.command_manager.get_command(command_name)[:, :2]
+    target_speed = torch.linalg.norm(command_xy, dim=1)
+    moving = target_speed > velocity_threshold
+    direction = command_xy / target_speed.clamp_min(velocity_threshold).unsqueeze(1)
+    actual_along = torch.sum(asset.data.root_lin_vel_b[:, :2] * direction, dim=1)
+    ratio = torch.clamp(actual_along / target_speed.clamp_min(velocity_threshold), 0.0, 1.0)
+    return torch.where(moving, ratio, torch.ones_like(ratio))
+
+
 def straight_lateral_velocity_l2(
     env: ManagerBasedRLEnv,
     command_name: str,
@@ -162,6 +306,88 @@ def joint_group_action_rate_l2(
         - env.action_manager.prev_action[:, joint_ids]
     )
     return torch.sum(torch.square(action_delta), dim=1)
+
+
+def joint_group_velocity_huber(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg,
+    speed_scale: float = 1.0,
+) -> torch.Tensor:
+    """Smoothly penalize fast measured joint motion without quadratic spikes."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    joint_velocity = asset.data.joint_vel[:, asset_cfg.joint_ids]
+    return (torch.sqrt(1.0 + torch.square(joint_velocity / speed_scale)) - 1.0).sum(dim=1)
+
+
+def joint_pair_opposed_action_rate_l2(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg,
+) -> torch.Tensor:
+    """Penalize only the changing opposed component of a parallel Jacobian pair.
+
+    For Z1 joint3/joint4, the measured end-effector Jacobian columns are
+    nearly parallel. Same-direction motion can move the TCP, while opposing
+    motion primarily changes the arm's internal configuration. Let the policy
+    learn this tradeoff rather than altering its actions after inference.
+    """
+    joint_ids = asset_cfg.joint_ids
+    if len(joint_ids) != 2:
+        raise ValueError("joint_pair_opposed_action_rate_l2 requires exactly two joints")
+    delta = env.action_manager.action[:, joint_ids] - env.action_manager.prev_action[:, joint_ids]
+    return torch.square(delta[:, 0] - delta[:, 1])
+
+
+def tcp_arm_nullspace_velocity_cost(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg,
+    command_name: str = "ee_target",
+    velocity_scale: float = 0.6,
+    tracking_error_scale: float = 0.12,
+    damping: float = 0.05,
+) -> torch.Tensor:
+    """Penalize arm motion that does not move the TCP toward its position task.
+
+    The *measured* arm velocity is split using the current TCP translational
+    Jacobian. Only its damped nullspace residual is penalized. The penalty
+    fades when the TCP is far from its target, so the policy can first recover
+    tracking. This is a training reward, never a post-policy action filter.
+    """
+    if velocity_scale <= 0 or tracking_error_scale <= 0 or damping <= 0:
+        raise ValueError("nullspace reward scales and damping must be positive")
+    asset: Articulation = env.scene[asset_cfg.name]
+    joint_ids = asset_cfg.joint_ids
+    if len(joint_ids) != 6 or len(asset_cfg.body_ids) != 1:
+        raise ValueError("nullspace reward requires six Z1 joints and one TCP body")
+
+    body_id = asset_cfg.body_ids[0]
+    jacobian_body_id = body_id - 1 if asset.is_fixed_base else body_id
+    jacobian_joint_ids = joint_ids if asset.is_fixed_base else [joint_id + 6 for joint_id in joint_ids]
+    # Select joints on the final axis to preserve (env, xyz, joint) ordering.
+    jacobian = asset.root_physx_view.get_jacobians()[:, jacobian_body_id, :3, :][
+        ..., jacobian_joint_ids
+    ]
+    joint_velocity = asset.data.joint_vel[:, joint_ids]
+    task_velocity = torch.bmm(jacobian, joint_velocity.unsqueeze(-1))
+    metric = torch.bmm(jacobian, jacobian.transpose(1, 2))
+    eye = torch.eye(3, device=metric.device, dtype=metric.dtype).unsqueeze(0)
+    projected = torch.bmm(
+        jacobian.transpose(1, 2),
+        torch.linalg.solve(metric + damping**2 * eye, task_velocity),
+    ).squeeze(-1)
+    null_velocity = joint_velocity - projected
+    null_cost = (
+        torch.sqrt(1.0 + torch.square(null_velocity / velocity_scale)) - 1.0
+    ).mean(dim=1)
+
+    target_b = env.command_manager.get_command(command_name)[:, :3]
+    base_id = asset.find_bodies("base_link")[0][0]
+    tcp_b = quat_apply_inverse(
+        asset.data.body_quat_w[:, base_id],
+        asset.data.body_pos_w[:, body_id] - asset.data.body_pos_w[:, base_id],
+    )
+    tracking_error = torch.linalg.norm(tcp_b - target_b, dim=1)
+    tracking_gate = torch.exp(-torch.square(tracking_error / tracking_error_scale))
+    return null_cost * tracking_gate
 
 def power_penalty(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
     """Penalize power consumption of the robot."""
@@ -436,6 +662,91 @@ def feet_long_air_penalty(
     reward = torch.sum(torch.square(excess), dim=1)
     
     return torch.where(is_still, torch.zeros_like(reward), reward)
+
+
+def prolonged_foot_contact_penalty(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg,
+    max_contact_time: float = 0.40,
+    maximum_excess_time: float = 0.40,
+    velocity_threshold: float = 0.10,
+    command_name: str = "base_velocity",
+) -> torch.Tensor:
+    """Penalize a foot remaining continuously planted for too long while moving.
+
+    The term is deliberately disabled at near-zero commands so that stable
+    four-foot standing is not mistaken for a gait defect.  A bounded squared
+    hinge keeps normal stance intervals free of penalty and prevents a stuck
+    foot late in an episode from producing an unbounded reward magnitude.
+    """
+    if max_contact_time < 0.0:
+        raise ValueError("max_contact_time cannot be negative")
+    if maximum_excess_time <= 0.0:
+        raise ValueError("maximum_excess_time must be positive")
+
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    current_contact_time = contact_sensor.data.current_contact_time
+    if current_contact_time is None:
+        return torch.zeros(env.num_envs, device=env.device)
+
+    contact_time = current_contact_time[:, sensor_cfg.body_ids]
+    excess = torch.clamp(
+        contact_time - max_contact_time,
+        min=0.0,
+        max=maximum_excess_time,
+    )
+    # Sum over feet so one persistently planted foot remains observable.  The
+    # configured reward weight controls the total contribution.
+    penalty = torch.sum(torch.square(excess / maximum_excess_time), dim=1)
+
+    command = env.command_manager.get_command(command_name)
+    moving = torch.linalg.norm(command, dim=1) > velocity_threshold
+    return torch.where(moving, penalty, torch.zeros_like(penalty))
+
+
+class DiagonalContactStateMismatchPenalty(ManagerTermBase):
+    """Penalize disagreement inside each diagonal trot pair while moving.
+
+    The existing smooth gait reward compares contact and air *timings*.  This
+    complementary term acts directly on the current binary contact state, so
+    a diagonal pair with only one planted foot receives an immediate signal.
+    It is disabled for near-zero commands to preserve stable four-foot stance.
+    """
+
+    def __init__(self, cfg: RewTerm, env: ManagerBasedRLEnv):
+        super().__init__(cfg, env)
+        self.contact_sensor: ContactSensor = env.scene.sensors[cfg.params["sensor_cfg"].name]
+        pair_names = cfg.params["synced_feet_pair_names"]
+        if len(pair_names) != 2 or any(len(pair) != 2 for pair in pair_names):
+            raise ValueError("Expected two diagonal foot pairs with two feet per pair.")
+        self.synced_feet_pairs = [
+            self.contact_sensor.find_bodies(pair)[0] for pair in pair_names
+        ]
+
+    def __call__(
+        self,
+        env: ManagerBasedRLEnv,
+        sensor_cfg: SceneEntityCfg,
+        synced_feet_pair_names,
+        velocity_threshold: float = 0.10,
+        command_name: str = "base_velocity",
+    ) -> torch.Tensor:
+        del sensor_cfg, synced_feet_pair_names
+        current_contact_time = self.contact_sensor.data.current_contact_time
+        if current_contact_time is None:
+            return torch.zeros(env.num_envs, device=env.device)
+
+        contacts = current_contact_time > 0.0
+        mismatch = torch.zeros(env.num_envs, device=env.device)
+        for first_foot, second_foot in self.synced_feet_pairs:
+            mismatch += torch.logical_xor(
+                contacts[:, first_foot], contacts[:, second_foot]
+            ).float()
+        mismatch *= 0.5
+
+        command = env.command_manager.get_command(command_name)
+        moving = torch.linalg.norm(command, dim=1) > velocity_threshold
+        return torch.where(moving, mismatch, torch.zeros_like(mismatch))
 
 
 class GaitReward(ManagerTermBase):
@@ -772,6 +1083,35 @@ def link_world_stability(
     return lin_cost + angular_weight * ang_cost
 
 
+def tcp_cross_path_velocity_cost(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg,
+    command_name: str = "ee_target",
+    vertical_scale: float = 0.20,
+    lateral_scale: float = 0.20,
+) -> torch.Tensor:
+    """Penalize tool velocity normal to the crack, not progress along it.
+
+    The VA3 world-acceleration penalty saturates on gait impulses, while the
+    arm can still oscillate rapidly enough to worsen actual TCP tracking.
+    A smooth pseudo-Huber velocity cost keeps a useful gradient for those
+    oscillations without rewarding a stationary tool on a moving path.
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    tool_velocity_w = asset.data.body_lin_vel_w[:, asset_cfg.body_ids[0], :]
+    command_term = env.command_manager.get_term(command_name)
+    tangent_error = command_term._path_heading_error_b
+    tangent_heading_w = asset.data.heading_w + tangent_error
+    lateral_velocity = (
+        -torch.sin(tangent_heading_w) * tool_velocity_w[:, 0]
+        + torch.cos(tangent_heading_w) * tool_velocity_w[:, 1]
+    )
+    vertical_velocity = tool_velocity_w[:, 2]
+    vertical_cost = torch.sqrt(1.0 + torch.square(vertical_velocity / vertical_scale)) - 1.0
+    lateral_cost = torch.sqrt(1.0 + torch.square(lateral_velocity / lateral_scale)) - 1.0
+    return vertical_cost + lateral_cost
+
+
 def crack_centerline_tracking_exp(
     env: ManagerBasedRLEnv,
     command_name: str,
@@ -815,6 +1155,52 @@ def crack_heading_tracking_exp(
     return torch.where(
         command_speed > velocity_threshold, reward, torch.zeros_like(reward)
     )
+
+
+def crack_path_error_pseudo_huber(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    error_attribute: str,
+    scale: float,
+    velocity_threshold: float = 0.08,
+) -> torch.Tensor:
+    """Give centreline/heading errors a useful gradient beyond the exp reward.
+
+    The existing exp terms are nearly zero after a large miss, allowing the
+    arm to follow the crack while B2 itself drifts away. This dimensionless
+    pseudo-Huber cost grows approximately linearly for larger deviations.
+    """
+    if scale <= 0:
+        raise ValueError("crack path error scale must be positive")
+    command_term = env.command_manager.get_term(command_name)
+    error = getattr(command_term, error_attribute)
+    command_speed = torch.linalg.vector_norm(
+        env.command_manager.get_command("base_velocity")[:, :2], dim=1
+    )
+    cost = torch.sqrt(1.0 + torch.square(error / scale)) - 1.0
+    return torch.where(command_speed > velocity_threshold, cost, torch.zeros_like(cost))
+
+
+def commanded_yaw_rate_pseudo_huber(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg,
+    scale: float = 0.10,
+    velocity_threshold: float = 0.08,
+) -> torch.Tensor:
+    """Penalize signed yaw-rate error even when its exponential reward saturates.
+
+    This acts on the measured body yaw rate, not on a path-derived surrogate:
+    a positive left-turn command with a negative actual yaw is penalized.
+    """
+    if scale <= 0:
+        raise ValueError("yaw-rate error scale must be positive")
+    asset: Articulation = env.scene[asset_cfg.name]
+    command = env.command_manager.get_command(command_name)
+    error = asset.data.root_ang_vel_b[:, 2] - command[:, 2]
+    cost = torch.sqrt(1.0 + torch.square(error / scale)) - 1.0
+    moving = torch.linalg.vector_norm(command[:, :2], dim=1) > velocity_threshold
+    return torch.where(moving, cost, torch.zeros_like(cost))
 
 
 def stance_feet_crack_clearance_penalty(
@@ -924,4 +1310,113 @@ def swing_leg_height_reward(
         body_vel = torch.linalg.norm(asset.data.root_lin_vel_b[:, :2], dim=1)
         commanded_move = torch.logical_or(commanded_move, body_vel > velocity_threshold)
     return torch.where(commanded_move, reward, torch.zeros_like(reward))
+
+
+def swing_foot_clearance_deficit(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg,
+    minimum_clearance: float = 0.055,
+    foot_radius: float = 0.032,
+    minimum_air_time: float = 0.04,
+    velocity_threshold: float = 0.08,
+    command_name: str = "base_velocity",
+) -> torch.Tensor:
+    """Penalize a swinging foot whose sole is too close to flat ground.
+
+    Unlike :func:`swing_leg_height_reward`, this term measures the clearance
+    of the bottom of the spherical B2 foot rather than the height of its link
+    origin.  The penalty starts only after a short airborne debounce so that
+    normal contact transitions do not dominate the signal.
+
+    The current training terrain is flat and each cloned environment is
+    translated by ``env_origins``.  Its local ground plane is therefore the
+    environment origin's z coordinate.
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    asset: RigidObject = env.scene[asset_cfg.name]
+
+    current_air_time = contact_sensor.data.current_air_time
+    current_contact_time = contact_sensor.data.current_contact_time
+    if current_air_time is None or current_contact_time is None:
+        return torch.zeros(env.num_envs, device=env.device)
+
+    current_air_time = current_air_time[:, sensor_cfg.body_ids]
+    current_contact_time = current_contact_time[:, sensor_cfg.body_ids]
+    swing_mask = torch.logical_and(
+        current_contact_time <= 0.0,
+        current_air_time >= minimum_air_time,
+    )
+
+    foot_center_z = asset.data.body_pos_w[:, asset_cfg.body_ids, 2]
+    ground_z = env.scene.env_origins[:, 2].unsqueeze(1)
+    sole_clearance = foot_center_z - ground_z - foot_radius
+    normalized_deficit = torch.clamp(
+        (minimum_clearance - sole_clearance) / max(minimum_clearance, 1.0e-6),
+        min=0.0,
+        max=2.0,
+    )
+    active_swing_feet = swing_mask.float()
+    penalty = torch.sum(torch.square(normalized_deficit) * active_swing_feet, dim=1)
+    penalty /= active_swing_feet.sum(dim=1).clamp_min(1.0)
+
+    command_speed = torch.linalg.norm(
+        env.command_manager.get_command(command_name)[:, :2], dim=1
+    )
+    return torch.where(
+        command_speed > velocity_threshold,
+        penalty,
+        torch.zeros_like(penalty),
+    )
+
+
+def swing_foot_clearance_target_exp(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg,
+    target_clearance: float = 0.035,
+    foot_radius: float = 0.032,
+    minimum_air_time: float = 0.04,
+    velocity_threshold: float = 0.08,
+    std: float = 0.02,
+    command_name: str = "base_velocity",
+) -> torch.Tensor:
+    """Reward a physical sole clearance during the debounced swing phase.
+
+    The older height term used the foot-link world z coordinate.  This version
+    subtracts both the cloned environment ground height and the spherical B2
+    foot radius, making ``target_clearance`` an actual sole-to-ground distance.
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    asset: RigidObject = env.scene[asset_cfg.name]
+
+    current_air_time = contact_sensor.data.current_air_time
+    current_contact_time = contact_sensor.data.current_contact_time
+    if current_air_time is None or current_contact_time is None:
+        return torch.zeros(env.num_envs, device=env.device)
+
+    current_air_time = current_air_time[:, sensor_cfg.body_ids]
+    current_contact_time = current_contact_time[:, sensor_cfg.body_ids]
+    swing_mask = torch.logical_and(
+        current_contact_time <= 0.0,
+        current_air_time >= minimum_air_time,
+    )
+
+    foot_center_z = asset.data.body_pos_w[:, asset_cfg.body_ids, 2]
+    ground_z = env.scene.env_origins[:, 2].unsqueeze(1)
+    sole_clearance = foot_center_z - ground_z - foot_radius
+    clearance_reward = torch.exp(-torch.abs(sole_clearance - target_clearance) / std)
+    # Divide by the configured feet rather than active feet.  This retains a
+    # useful incentive for a regular swing duty cycle as well as its height.
+    reward = torch.sum(clearance_reward * swing_mask.float(), dim=1)
+    reward /= max(swing_mask.shape[1], 1)
+
+    command_speed = torch.linalg.norm(
+        env.command_manager.get_command(command_name)[:, :2], dim=1
+    )
+    return torch.where(
+        command_speed > velocity_threshold,
+        reward,
+        torch.zeros_like(reward),
+    )
     

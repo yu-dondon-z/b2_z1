@@ -238,6 +238,75 @@ class AMPRearCurveGaitHeadingV5FineTuneRunnerCfg(
 
 
 @configclass
+class AMPRealGaitClearanceV1FineTuneRunnerCfg(
+    AMPRearCurveGaitHeadingV5FineTuneRunnerCfg
+):
+    """Low-drift continuation for explicit foot-clearance adaptation."""
+
+    max_iterations = 1200
+    save_interval = 100
+    experiment_name = "b2_z1_amp"
+
+
+@configclass
+class AMPRealGaitClearanceV2FineTuneRunnerCfg(
+    AMPRealGaitClearanceV1FineTuneRunnerCfg
+):
+    """Short, low-drift continuation after rejecting the aggressive V1 run."""
+
+    max_iterations = 800
+    save_interval = 100
+    experiment_name = "b2_z1_amp"
+
+
+@configclass
+class AMPRealGaitClearanceV3FineTuneRunnerCfg(
+    AMPRearCurveGaitHeadingV5FineTuneRunnerCfg
+):
+    """Minimal continuation that retains the V5 optimizer state."""
+
+    max_iterations = 600
+    save_interval = 100
+    experiment_name = "b2_z1_amp"
+
+
+@configclass
+class AMPRealGaitClearanceV4HeadingRecoveryRunnerCfg(
+    AMPRealGaitClearanceV3FineTuneRunnerCfg
+):
+    """Brief yaw-tracking recovery from the selected V3 checkpoint."""
+
+    max_iterations = 300
+    save_interval = 50
+    experiment_name = "b2_z1_amp"
+
+
+@configclass
+class AMPRealGaitClearanceV5StraightRecoveryRunnerCfg(
+    AMPRealGaitClearanceV3FineTuneRunnerCfg
+):
+    """Very-low-KL straight-heading recovery from selected V3 model_10700."""
+
+    max_iterations = 200
+    save_interval = 25
+    experiment_name = "b2_z1_amp"
+    algorithm = AMP_RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.02,
+        entropy_coef=0.0,
+        num_learning_epochs=2,
+        num_mini_batches=4,
+        learning_rate=3.0e-6,
+        schedule="adaptive",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.001,
+        max_grad_norm=0.2,
+    )
+
+
+@configclass
 class AMPProprioOmniV4FineTuneRunnerCfg(AMP_PPORunnerCfg):
     """Conservative omnidirectional continuation from V3 ``model_10000``."""
 
@@ -273,3 +342,534 @@ class AMPProprioOmniV4FineTuneRunnerCfg(AMP_PPORunnerCfg):
             0.310004, 0.199345, 0.245810, 0.215180, 0.324290, 0.172532,
         ],
     )
+
+
+@configclass
+class AMPProprioOmniV5FoundationRunnerCfg(
+    AMPRealGaitClearanceV3FineTuneRunnerCfg
+):
+    """Low-drift omni adaptation from clearance V3 ``model_10700``."""
+
+    max_iterations = 600
+    save_interval = 50
+    experiment_name = "b2_z1_amp"
+
+
+@configclass
+class AMPProprioForwardV6FoundationRunnerCfg(
+    AMPRealGaitClearanceV3FineTuneRunnerCfg
+):
+    """Short direct-forward adaptation before expanding the command space."""
+
+    max_iterations = 400
+    save_interval = 25
+    experiment_name = "b2_z1_amp"
+
+
+@configclass
+class AMPProprioForwardV7HeadingHoldRunnerCfg(
+    AMPProprioForwardV6FoundationRunnerCfg
+):
+    """Short adaptation to bounded IMU heading corrections."""
+
+    max_iterations = 200
+    save_interval = 25
+
+
+@configclass
+class AMPProprioForwardBackwardV8ClearanceRunnerCfg(
+    AMPProprioForwardV7HeadingHoldRunnerCfg
+):
+    """Conservative bidirectional continuation with mild clearance shaping."""
+
+    max_iterations = 400
+    save_interval = 25
+
+
+@configclass
+class AMPProprioForwardBackwardV9GentleRunnerCfg(
+    AMPProprioForwardBackwardV8ClearanceRunnerCfg
+):
+    """Short low-drift continuation with only 15% low-speed reverse samples."""
+
+    max_iterations = 300
+    save_interval = 25
+
+
+@configclass
+class AMPProprioForwardBackwardV10BalancedRunnerCfg(
+    AMPProprioForwardBackwardV9GentleRunnerCfg
+):
+    """Brief checkpointed adaptation for measurable lift and reverse motion."""
+
+    max_iterations = 250
+    save_interval = 25
+
+
+@configclass
+class AMPProprioBackwardV11BootstrapRunnerCfg(
+    AMPProprioForwardBackwardV10BalancedRunnerCfg
+):
+    """Short backward-only acquisition stage with frequent checkpoints."""
+
+    max_iterations = 250
+    save_interval = 25
+
+
+@configclass
+class AMPProprioBackwardV12AcquisitionRunnerCfg(
+    AMPProprioBackwardV11BootstrapRunnerCfg
+):
+    """Moderately faster optimizer for escaping the stationary policy basin."""
+
+    max_iterations = 200
+    save_interval = 25
+    algorithm = AMP_RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.05,
+        entropy_coef=0.0,
+        num_learning_epochs=2,
+        num_mini_batches=4,
+        learning_rate=3.0e-5,
+        schedule="adaptive",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.005,
+        max_grad_norm=0.5,
+    )
+
+
+@configclass
+class AMPProprioBackwardV13ExpertStartRunnerCfg(
+    AMPProprioBackwardV12AcquisitionRunnerCfg
+):
+    """Velocity-matched expert-reset bootstrap; discriminator keeps all priors."""
+
+    max_iterations = 200
+    save_interval = 25
+
+
+@configclass
+class AMPProprioForwardV14ClearanceRunnerCfg(
+    AMPProprioForwardV7HeadingHoldRunnerCfg
+):
+    """Low-KL V7 continuation for a measured 2.5 cm swing clearance."""
+
+    max_iterations = 200
+    save_interval = 25
+    algorithm = AMP_RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.03,
+        entropy_coef=0.0,
+        num_learning_epochs=2,
+        num_mini_batches=4,
+        learning_rate=5.0e-6,
+        schedule="adaptive",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.002,
+        max_grad_norm=0.3,
+    )
+
+
+@configclass
+class AMPProprioForwardV15ClearanceRunnerCfg(
+    AMPProprioForwardV14ClearanceRunnerCfg
+):
+    """Second lift stage after the conservative V14 response audit."""
+
+    max_iterations = 100
+    save_interval = 25
+    algorithm = AMP_RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.04,
+        entropy_coef=0.0,
+        num_learning_epochs=2,
+        num_mini_batches=4,
+        learning_rate=1.0e-5,
+        schedule="adaptive",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.003,
+        max_grad_norm=0.3,
+    )
+
+
+@configclass
+class AMPProprioForwardV16RearClearanceRunnerCfg(
+    AMPProprioForwardV15ClearanceRunnerCfg
+):
+    """Short rear-clearance balancing stage with frequent checkpoints."""
+
+    max_iterations = 75
+    save_interval = 15
+    algorithm = AMP_RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.04,
+        entropy_coef=0.0,
+        num_learning_epochs=2,
+        num_mini_batches=4,
+        learning_rate=1.2e-5,
+        schedule="adaptive",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.003,
+        max_grad_norm=0.3,
+    )
+
+
+@configclass
+class AMPProprioForwardV17ClearanceRecoveryRunnerCfg(
+    AMPProprioForwardV16RearClearanceRunnerCfg
+):
+    """Very-low-drift recovery after the maximum-clearance V16 checkpoint."""
+
+    max_iterations = 50
+    save_interval = 10
+    algorithm = AMP_RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.03,
+        entropy_coef=0.0,
+        num_learning_epochs=2,
+        num_mini_batches=4,
+        learning_rate=5.0e-6,
+        schedule="adaptive",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.002,
+        max_grad_norm=0.25,
+    )
+
+
+@configclass
+class AMPProprioForwardV18ContactBalanceRunnerCfg(
+    AMPProprioForwardV15ClearanceRunnerCfg
+):
+    """Low-KL contact-balance continuation from V15 ``model_11350``."""
+
+    max_iterations = 100
+    save_interval = 10
+    algorithm = AMP_RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.03,
+        entropy_coef=0.0,
+        num_learning_epochs=2,
+        num_mini_batches=4,
+        learning_rate=5.0e-6,
+        schedule="adaptive",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.002,
+        max_grad_norm=0.25,
+    )
+
+
+@configclass
+class AMPProprioForwardV19ContactCycleRunnerCfg(
+    AMPProprioForwardV15ClearanceRunnerCfg
+):
+    """Low-KL contact-cycle continuation from V15 ``model_11350``."""
+
+    max_iterations = 100
+    save_interval = 10
+    algorithm = AMP_RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.03,
+        entropy_coef=0.0,
+        num_learning_epochs=2,
+        num_mini_batches=4,
+        learning_rate=5.0e-6,
+        schedule="adaptive",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.002,
+        max_grad_norm=0.25,
+    )
+
+
+@configclass
+class AMPProprioOmniV20VisionPreserveRunnerCfg(
+    AMPProprioForwardV19ContactCycleRunnerCfg
+):
+    """Low-drift cardinal-motion acquisition from V19 ``model_11449``."""
+
+    # Frequent checkpoints let the direction/vision regression gate select an
+    # early model before the forward gait or TCP response begins to drift.
+    max_iterations = 250
+    save_interval = 10
+    experiment_name = "b2_z1_amp"
+    algorithm = AMP_RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.04,
+        entropy_coef=0.0,
+        num_learning_epochs=2,
+        num_mini_batches=4,
+        learning_rate=1.5e-5,
+        # A fixed rate prevents the low initial KL from silently raising the
+        # optimizer by several multiples and eroding the V19 visual behavior.
+        schedule="fixed",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.004,
+        max_grad_norm=0.30,
+    )
+
+
+@configclass
+class AMPVA1TruthCurveRunnerCfg(AMP_PPORunnerCfg):
+    """Stable from-scratch 8000-iteration runner for the VA1 curriculum."""
+
+    num_steps_per_env = 24
+    max_iterations = 8000
+    save_interval = 50
+    experiment_name = "b2_z1_amp"
+    clip_actions = 5.0
+    empirical_normalization = False
+
+    # Starting below std=1 avoids violent early arm commands, while the
+    # explicit upper bounds prevent the late noise growth that caused NaNs in
+    # older long runs.  The leg cap remains high enough to discover a trot.
+    policy = AMP_RslRlPpoActorCriticCfg(
+        init_noise_std=0.65,
+        actor_hidden_dims=[512, 256, 128],
+        critic_hidden_dims=[512, 256, 128],
+        activation="elu",
+    )
+    algorithm = AMP_RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.20,
+        entropy_coef=0.005,
+        num_learning_epochs=5,
+        num_mini_batches=4,
+        # A fixed conservative rate cannot silently climb toward 1e-2 when
+        # the initial KL is small, which was a source of late-run instability.
+        learning_rate=3.0e-4,
+        schedule="fixed",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.01,
+        max_grad_norm=0.50,
+    )
+    amp_cfg = AMP_AlgorithmCfg(
+        amp_motion_files=MOTION_FILES,
+        amp_reward_coef=0.20,
+        amp_task_reward_lerp=0.80,
+        amp_num_preload_transitions=20000,
+        min_normalized_std=[0.01, 0.01, 0.01] * 6,
+        max_policy_std=[0.85] * 12 + [0.55] * 6,
+    )
+
+
+@configclass
+class AMPVA2TruthCurveRunnerCfg(AMPVA1TruthCurveRunnerCfg):
+    """From-scratch runner balancing explicit progress with the AMP gait prior."""
+
+    algorithm = AMP_RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.20,
+        entropy_coef=0.010,
+        num_learning_epochs=5,
+        num_mini_batches=4,
+        learning_rate=2.5e-4,
+        schedule="fixed",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.01,
+        max_grad_norm=0.50,
+    )
+    amp_cfg = AMP_AlgorithmCfg(
+        amp_motion_files=MOTION_FILES,
+        amp_reward_coef=0.20,
+        # Give the motion discriminator enough influence to turn progress into
+        # a trot instead of an arbitrary low-energy shuffle.
+        amp_task_reward_lerp=0.65,
+        amp_num_preload_transitions=20000,
+        min_normalized_std=[0.01, 0.01, 0.01] * 6,
+        max_policy_std=[0.85] * 12 + [0.55] * 6,
+    )
+
+
+@configclass
+class AMPVA3TruthCurveRunnerCfg(AMPVA1TruthCurveRunnerCfg):
+    """Conservative from-scratch runner for the anti-kneeling VA3 task."""
+
+    algorithm = AMP_RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.20,
+        entropy_coef=0.007,
+        num_learning_epochs=5,
+        num_mini_batches=4,
+        learning_rate=2.0e-4,
+        schedule="fixed",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.01,
+        max_grad_norm=0.50,
+    )
+    amp_cfg = AMP_AlgorithmCfg(
+        amp_motion_files=MOTION_FILES,
+        amp_reward_coef=0.20,
+        # More style influence than VA2, while task rewards still retain a
+        # majority share for curve, speed and TCP tracking.
+        amp_task_reward_lerp=0.55,
+        amp_num_preload_transitions=20000,
+        min_normalized_std=[0.01, 0.01, 0.01] * 6,
+        max_policy_std=[0.75] * 12 + [0.45] * 6,
+    )
+
+
+@configclass
+class AMPVA4SmoothToolRunnerCfg(AMPVA3TruthCurveRunnerCfg):
+    """Conservative VA3 continuation after correcting the TCP objective."""
+
+    algorithm = AMP_RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.20,
+        entropy_coef=0.004,
+        num_learning_epochs=5,
+        num_mini_batches=4,
+        learning_rate=1.0e-4,
+        schedule="fixed",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.01,
+        max_grad_norm=0.50,
+    )
+
+
+@configclass
+class AMPVA5ElbowWristRunnerCfg(AMPVA4SmoothToolRunnerCfg):
+    """Small, separate continuation to suppress joint3/joint4 cycling."""
+
+    algorithm = AMP_RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.20,
+        entropy_coef=0.003,
+        num_learning_epochs=5,
+        num_mini_batches=4,
+        learning_rate=8.0e-5,
+        schedule="fixed",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.01,
+        max_grad_norm=0.50,
+    )
+
+
+@configclass
+class AMPVA6NullspaceRunnerCfg(AMPVA5ElbowWristRunnerCfg):
+    """Use VA5's conservative update rate for a different nullspace objective."""
+
+
+@configclass
+class AMPVA7WholeBodyRunnerCfg(AMPVA3TruthCurveRunnerCfg):
+    """Independent 8000-iteration run, with the VA3 stable from-scratch PPO."""
+
+    max_iterations = 8000
+    save_interval = 100
+
+
+@configclass
+class AMPVA8PathRunnerCfg(AMPVA7WholeBodyRunnerCfg):
+    """Low-drift fine-tuning from VA7/7999 for body path alignment."""
+
+    max_iterations = 1000
+    save_interval = 100
+    algorithm = AMP_RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.10,
+        entropy_coef=0.002,
+        num_learning_epochs=3,
+        num_mini_batches=4,
+        learning_rate=5.0e-5,
+        schedule="fixed",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.006,
+        max_grad_norm=0.40,
+    )
+
+
+@configclass
+class AMPVA9PreserveArmRunnerCfg(AMPVA8PathRunnerCfg):
+    """Very conservative B2-head adaptation with the VA7 arm actor fixed."""
+
+    max_iterations = 800
+    algorithm = AMP_RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.05,
+        entropy_coef=0.001,
+        num_learning_epochs=3,
+        num_mini_batches=4,
+        learning_rate=2.0e-5,
+        schedule="fixed",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.005,
+        max_grad_norm=0.35,
+    )
+
+
+@configclass
+class AMPVA10SignedYawRunnerCfg(AMPVA9PreserveArmRunnerCfg):
+    """Low-rate full-body PPO with VA7 arm-action distillation at train time."""
+
+    max_iterations = 1000
+
+
+@configclass
+class AMPVA11SafetyRunnerCfg(AMPVA10SignedYawRunnerCfg):
+    """Conservative continuation with safety-gated curve progression."""
+
+    max_iterations = 300
+
+
+@configclass
+class AMPVA12GaitPreserveRunnerCfg(AMPVA11SafetyRunnerCfg):
+    """Same PPO step size; only the prior and safety terms change."""
+
+
+@configclass
+class AMPVA13LowNoiseRunnerCfg(AMPVA12GaitPreserveRunnerCfg):
+    """Keep the conservative PPO schedule for the lower-noise comparison."""
+
+
+@configclass
+class AMPVA14FromScratchRunnerCfg(AMPVA7WholeBodyRunnerCfg):
+    """Fresh PPO/AMP student; the independent Z1 teacher is training-only."""
+
+    resume = False
+    max_iterations = 8000
+    save_interval = 100
+
+    def __post_init__(self):
+        self.policy.init_noise_std = 0.50
+        self.algorithm.learning_rate = 2.0e-4
+        self.algorithm.entropy_coef = 0.005
+        # Uniform bounds avoid assuming that Z1 occupies the final six rows.
+        self.amp_cfg.max_policy_std = [0.65] * 18
+
+
+@configclass
+class AMPVA15CurriculumRunnerCfg(AMPVA14FromScratchRunnerCfg):
+    """Conservative continuation from the screened VA14 checkpoint."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.algorithm.learning_rate = 1.0e-4
+        self.max_iterations = 5500

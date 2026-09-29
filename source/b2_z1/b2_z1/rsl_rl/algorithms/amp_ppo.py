@@ -120,6 +120,14 @@ class AMP_PPO:
         # PPO components
         self.policy = policy
         self.policy.to(self.device)
+        # Optional train-time reference for preserving a proven arm policy
+        # while the shared actor learns better B2 path/heading control.
+        self.arm_teacher_actor = None
+        self.arm_teacher_action_ids = None
+        self.arm_teacher_weight = 0.0
+        self.leg_teacher_action_ids = None
+        self.leg_teacher_weight = 0.0
+        self.leg_teacher_yaw_release = 0.10
         # Create optimizer
         # self.optimizer = optim.Adam(self.policy.parameters(), lr=learning_rate)
         
@@ -234,6 +242,8 @@ class AMP_PPO:
         mean_value_loss = 0
         mean_surrogate_loss = 0
         mean_entropy = 0
+        mean_arm_teacher_loss = 0.0
+        mean_leg_teacher_loss = 0.0
         
         # amp
         mean_amp_loss = 0
@@ -430,6 +440,33 @@ class AMP_PPO:
 
             loss = surrogate_loss + self.value_loss_coef * value_loss - self.entropy_coef * entropy_batch.mean() \
                    + amp_loss + grad_pen_loss
+
+            if self.arm_teacher_actor is not None:
+                with torch.no_grad():
+                    teacher_actions = self.arm_teacher_actor(obs_batch[:original_batch_size])
+                if self.arm_teacher_weight > 0.0:
+                    arm_teacher_loss = torch.square(
+                        mu_batch[:, self.arm_teacher_action_ids]
+                        - teacher_actions[:, self.arm_teacher_action_ids]
+                    ).mean()
+                    loss = loss + self.arm_teacher_weight * arm_teacher_loss
+                    mean_arm_teacher_loss += arm_teacher_loss.detach().item()
+                if self.leg_teacher_weight > 0.0:
+                    # Observation indices 0:3 are the unscaled body velocity
+                    # command. Preserve VA7's straight trot, but allow B2
+                    # action changes for nonzero yaw requests.
+                    yaw_fraction = (
+                        torch.abs(obs_batch[:original_batch_size, 2])
+                        / self.leg_teacher_yaw_release
+                    ).clamp(0.0, 1.0)
+                    preserve_fraction = 1.0 - 0.8 * yaw_fraction
+                    leg_action_error = torch.square(
+                        mu_batch[:, self.leg_teacher_action_ids]
+                        - teacher_actions[:, self.leg_teacher_action_ids]
+                    ).mean(dim=1)
+                    leg_teacher_loss = (leg_action_error * preserve_fraction).mean()
+                    loss = loss + self.leg_teacher_weight * leg_teacher_loss
+                    mean_leg_teacher_loss += leg_teacher_loss.detach().item()
             
             
             # Symmetry loss
@@ -526,6 +563,8 @@ class AMP_PPO:
         mean_value_loss /= num_updates
         mean_surrogate_loss /= num_updates
         mean_entropy /= num_updates
+        mean_arm_teacher_loss /= num_updates
+        mean_leg_teacher_loss /= num_updates
         # -- For RND
         if mean_rnd_loss is not None:
             mean_rnd_loss /= num_updates
@@ -554,6 +593,11 @@ class AMP_PPO:
             "amp_policy_pred": mean_policy_pred,
             "amp_expert_pred": mean_expert_pred,
         }
+        if self.arm_teacher_actor is not None:
+            if self.arm_teacher_weight > 0.0:
+                loss_dict["arm_teacher"] = mean_arm_teacher_loss
+            if self.leg_teacher_weight > 0.0:
+                loss_dict["leg_teacher"] = mean_leg_teacher_loss
         if self.rnd:
             loss_dict["rnd"] = mean_rnd_loss
         if self.symmetry:

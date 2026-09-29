@@ -595,6 +595,9 @@ def main() -> None:
                         ],
                         "control_waypoints_robot_xyz": control.tolist(),
                     }
+                    for key in ("capture_base_position_w", "capture_base_quaternion_wxyz", "capture_generation"):
+                        if key in metadata:
+                            payload[key] = metadata[key]
                     write_json_atomic(exchange / "latest_trajectory.json", payload)
                     write_json_atomic(
                         exchange / "latest_vision_status.json",

@@ -2,31 +2,30 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "后向视觉 V5：圆弧+步态+直线航向续训",
+            "name": "VA15视觉：裂缝跟踪（一键启动，model_5000）",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/scripts/rsl_rl/train_amp.py",
+            "program": "${workspaceFolder}/scripts/vision/play_va15_vision.py",
+            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "subProcess": false,
+            "args": [],
+            "env": {"PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"}
+        },
+        {
+            "name": "VA15：连续圆弧播放（model_5000，候选对比）",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/rsl_rl/play_amp.py",
             "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
             "justMyCode": false,
             "args": [
-                "--task",
-                "Unitree-b2z1-AMP-Rear-Curve-Gait-Heading-V5-Finetune",
-                "--num_envs",
-                "1024",
-                "--resume",
-                "--load_run",
-                "2026-09-09_16-01-19_rear_vision_v3_gait_finetune_from9600",
-                "--checkpoint",
-                "model_10000.pt",
-                "--max_iterations",
-                "1200",
-                "--run_name",
-                "rear_curve_gait_heading_v5_from10000",
-                "--reset_optimizer",
-                "--headless",
-                "agent.amp_cfg.amp_num_preload_transitions=20000"
+                "--task", "Unitree-b2z1-AMP-VA15-Curriculum-Play",
+                "--checkpoint", "${workspaceFolder}/logs/rsl_rl/b2_z1_amp/2026-09-28_15-07-31_va15_curriculum_from2500/model_5000.pt",
+                "--num_envs", "1", "--real-time"
             ],
             "env": {
                 "HYDRA_FULL_ERROR": "1",
@@ -35,7 +34,130 @@
             }
         },
         {
-            "name": "后向视觉 V5：实际曲线裂缝视觉播放（model_10300）",
+            "name": "VA15：连续圆弧播放（model_5500，候选对比）",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/rsl_rl/play_amp.py",
+            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--task", "Unitree-b2z1-AMP-VA15-Curriculum-Play",
+                "--checkpoint", "${workspaceFolder}/logs/rsl_rl/b2_z1_amp/2026-09-28_15-07-31_va15_curriculum_from2500/model_5500.pt",
+                "--num_envs", "1", "--real-time"
+            ],
+            "env": {
+                "HYDRA_FULL_ERROR": "1",
+                "PYTHONUNBUFFERED": "1",
+                "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"
+            }
+        },
+        {
+            "name": "VA15：修复轨迹课程（从VA14第2500轮续训）",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/rsl_rl/train_amp.py",
+            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--task", "Unitree-b2z1-AMP-VA15-Curriculum",
+                "--num_envs", "1024", "--headless", "--resume",
+                "--load_run", "2026-09-28_10-26-49_va14_from_scratch",
+                "--checkpoint", "model_2500.pt", "--reset_optimizer",
+                "--teacher-checkpoint", "${workspaceFolder}/logs/rsl_rl/b2_z1_amp/2026-09-24_09-50-29_va7_whole_body_from_scratch/model_7999.pt",
+                "--arm-teacher-weight", "5.0", "--leg-teacher-weight", "0.0",
+                "--max_iterations", "5500", "--run_name", "va15_curriculum_from2500",
+                "agent.amp_cfg.amp_num_preload_transitions=20000"
+            ],
+            "env": {"HYDRA_FULL_ERROR": "1", "PYTHONUNBUFFERED": "1"}
+        },
+        {
+            "name": "VA14：从头训练8000轮（中心线+航向+机械臂参考）",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/rsl_rl/train_amp.py",
+            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--task", "Unitree-b2z1-AMP-VA14-From-Scratch",
+                "--num_envs", "1024",
+                "--headless",
+                "--teacher-checkpoint", "${workspaceFolder}/logs/rsl_rl/b2_z1_amp/2026-09-24_09-50-29_va7_whole_body_from_scratch/model_7999.pt",
+                "--arm-teacher-weight", "5.0",
+                "--leg-teacher-weight", "0.0",
+                "--initial-arm-policy-std", "0.15",
+                "--max_iterations", "8000",
+                "--run_name", "va14_from_scratch",
+                "agent.resume=false",
+                "agent.amp_cfg.amp_num_preload_transitions=20000"
+            ],
+            "env": {
+                "HYDRA_FULL_ERROR": "1",
+                "PYTHONUNBUFFERED": "1"
+            }
+        },
+        {
+            "name": "VA13：保留机械臂的中心线与航向微调（300轮）",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/rsl_rl/train_amp.py",
+            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--task", "Unitree-b2z1-AMP-VA13-Low-Noise",
+                "--num_envs", "1024",
+                "--headless",
+                "--resume",
+                "--load_run", "2026-09-24_09-50-29_va7_whole_body_from_scratch",
+                "--checkpoint", "model_7999.pt",
+                "--reset_optimizer",
+                "--reset_leg_policy_std", "0.18",
+                "--arm-teacher-weight", "5.0",
+                "--leg-teacher-weight", "0.6",
+                "--leg-teacher-yaw-release", "0.10",
+                "--max_iterations", "300",
+                "--run_name", "va13_low_noise_from7999",
+                "agent.amp_cfg.amp_num_preload_transitions=20000",
+                "agent.save_interval=25"
+            ],
+            "env": {
+                "HYDRA_FULL_ERROR": "1",
+                "PYTHONUNBUFFERED": "1"
+            }
+        },
+        {
+            "name": "当前推荐 V19：本体前进播放（model_11449）",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/rsl_rl/play_amp.py",
+            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--task",
+                "Unitree-b2z1-AMP-Proprio-Forward-V14-Clearance-Play",
+                "--checkpoint",
+                "${workspaceFolder}/logs/rsl_rl/b2_z1_amp/2026-09-21_08-48-36_proprio_forward_v19_contact_cycle_from11350/model_11449.pt",
+                "--num_envs",
+                "1",
+                "--real-time"
+            ],
+            "env": {
+                "HYDRA_FULL_ERROR": "1",
+                "PYTHONUNBUFFERED": "1",
+                "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"
+            }
+        },
+        {
+            "name": "当前推荐 V19：后向视觉轨迹播放（model_11449）",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/scripts/rsl_rl/play_amp.py",
@@ -47,7 +169,7 @@
                 "--task",
                 "Unitree-b2z1-AMP-Rear-Curve-Gait-Heading-V5-Finetune-Play",
                 "--checkpoint",
-                "${workspaceFolder}/logs/rsl_rl/b2_z1_amp/2026-09-13_14-31-05_rear_curve_gait_heading_v5_from10000/model_10300.pt",
+                "${workspaceFolder}/logs/rsl_rl/b2_z1_amp/2026-09-21_08-48-36_proprio_forward_v19_contact_cycle_from11350/model_11449.pt",
                 "--num_envs",
                 "1",
                 "--enable_cameras",
@@ -57,244 +179,8 @@
                 "B2_Z1_VISION_EXCHANGE": "/tmp/b2_z1_vision_bridge",
                 "B2_Z1_VISION_CAMERA": "front_depth",
                 "HYDRA_FULL_ERROR": "1",
-                "PYTHONUNBUFFERED": "1"
-            }
-        },
-        {
-            "name": "后向机械臂+视觉：合成轨迹训练",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/scripts/rsl_rl/train_amp.py",
-            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
-            "cwd": "${workspaceFolder}",
-            "console": "integratedTerminal",
-            "justMyCode": false,
-            "args": [
-                "--task",
-                "Unitree-b2z1-AMP-Rear-Synthetic",
-                "--num_envs",
-                "1024",
-                "--max_iterations",
-                "8000",
-                "--headless",
-                "agent.amp_cfg.amp_num_preload_transitions=20000"
-            ],
-            "env": {
-                "HYDRA_FULL_ERROR": "1",
                 "PYTHONUNBUFFERED": "1",
                 "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"
-            }
-        },
-        {
-            "name": "后向视觉 V2.2：修复后可视化续训（model_9400）",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/scripts/rsl_rl/train_amp.py",
-            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
-            "cwd": "${workspaceFolder}",
-            "console": "integratedTerminal",
-            "justMyCode": false,
-            "args": [
-                "--task",
-                "Unitree-b2z1-AMP-Rear-Vision-V2-Finetune-Visual",
-                "--num_envs",
-                "32",
-                "--resume",
-                "--load_run",
-                "2026-09-04_09-35-51_rear_deployment_finetune_from7999",
-                "--checkpoint",
-                "model_9400.pt",
-                "--max_iterations",
-                "1000",
-                "--run_name",
-                "rear_vision_v2_2_visual_repair_from9400",
-                "--reset_optimizer"
-            ],
-            "env": {
-                "HYDRA_FULL_ERROR": "1",
-                "PYTHONUNBUFFERED": "1",
-                "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"
-            }
-        },
-        {
-            "name": "后向视觉 V2.2：正式修复续训（model_9400）",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/scripts/rsl_rl/train_amp.py",
-            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
-            "cwd": "${workspaceFolder}",
-            "console": "integratedTerminal",
-            "justMyCode": false,
-            "args": [
-                "--task",
-                "Unitree-b2z1-AMP-Rear-Vision-V2-Finetune",
-                "--num_envs",
-                "1024",
-                "--resume",
-                "--load_run",
-                "2026-09-04_09-35-51_rear_deployment_finetune_from7999",
-                "--checkpoint",
-                "model_9400.pt",
-                "--max_iterations",
-                "1000",
-                "--run_name",
-                "rear_vision_v2_2_repair_from9400",
-                "--reset_optimizer",
-                "--headless"
-            ],
-            "env": {
-                "HYDRA_FULL_ERROR": "1",
-                "PYTHONUNBUFFERED": "1",
-                "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"
-            }
-        },
-        {
-            "name": "后向视觉 V3：步态稳定微调（从 model_9600）",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/scripts/rsl_rl/train_amp.py",
-            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
-            "cwd": "${workspaceFolder}",
-            "console": "integratedTerminal",
-            "justMyCode": false,
-            "args": [
-                "--task",
-                "Unitree-b2z1-AMP-Rear-Vision-V3-Gait-Finetune",
-                "--num_envs",
-                "1024",
-                "--resume",
-                "--load_run",
-                "2026-09-08_10-32-14_rear_vision_v2_2_repair_from9400",
-                "--checkpoint",
-                "model_9600.pt",
-                "--max_iterations",
-                "600",
-                "--run_name",
-                "rear_vision_v3_gait_finetune_from9600",
-                "--reset_optimizer",
-                "--headless"
-            ],
-            "env": {
-                "HYDRA_FULL_ERROR": "1",
-                "PYTHONUNBUFFERED": "1",
-                "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"
-            }
-        },
-        {
-            "name": "本体全向 V4：从 model_10000 正式续训",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/scripts/rsl_rl/train_amp.py",
-            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
-            "cwd": "${workspaceFolder}",
-            "console": "integratedTerminal",
-            "justMyCode": false,
-            "args": [
-                "--task",
-                "Unitree-b2z1-AMP-Proprio-Omni-V4-Finetune",
-                "--num_envs",
-                "1024",
-                "--resume",
-                "--load_run",
-                "2026-09-09_16-01-19_rear_vision_v3_gait_finetune_from9600",
-                "--checkpoint",
-                "model_10000.pt",
-                "--max_iterations",
-                "2000",
-                "--run_name",
-                "proprio_omni_v4_from_model10000",
-                "--reset_optimizer",
-                "--headless",
-                "agent.amp_cfg.amp_num_preload_transitions=20000"
-            ],
-            "env": {
-                "HYDRA_FULL_ERROR": "1",
-                "PYTHONUNBUFFERED": "1",
-                "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"
-            }
-        },
-        {
-            "name": "本体全向 V4：可视化检查命令与步态",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/scripts/rsl_rl/train_amp.py",
-            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
-            "cwd": "${workspaceFolder}",
-            "console": "integratedTerminal",
-            "justMyCode": false,
-            "args": [
-                "--task",
-                "Unitree-b2z1-AMP-Proprio-Omni-V4-Finetune-Visual",
-                "--num_envs",
-                "32",
-                "--resume",
-                "--load_run",
-                "2026-09-09_16-01-19_rear_vision_v3_gait_finetune_from9600",
-                "--checkpoint",
-                "model_10000.pt",
-                "--max_iterations",
-                "100",
-                "--run_name",
-                "proprio_omni_v4_visual_check",
-                "--reset_optimizer",
-                "agent.amp_cfg.amp_num_preload_transitions=20000"
-            ],
-            "env": {
-                "HYDRA_FULL_ERROR": "1",
-                "PYTHONUNBUFFERED": "1",
-                "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"
-            }
-        },
-        {
-            "name": "后向机械臂+视觉：播放V2.2最佳策略（model_9600）",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/scripts/rsl_rl/play_amp.py",
-            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
-            "cwd": "${workspaceFolder}",
-            "console": "integratedTerminal",
-            "justMyCode": false,
-            "args": [
-                "--task",
-                "Unitree-b2z1-AMP-Rear-Vision-Play",
-                "--num_envs",
-                "1",
-                "--checkpoint",
-                "${workspaceFolder}/logs/rsl_rl/b2_z1_amp/2026-09-08_10-32-14_rear_vision_v2_2_repair_from9400/model_9600.pt",
-                "--enable_cameras",
-                "--real-time"
-            ],
-            "env": {
-                "B2_Z1_VISION_EXCHANGE": "/tmp/b2_z1_vision_bridge",
-                "B2_Z1_VISION_CAMERA": "front_depth",
-                "HYDRA_FULL_ERROR": "1",
-                "PYTHONUNBUFFERED": "1"
-            }
-        },
-        {
-            "name": "后向机械臂+视觉：播放V3步态最佳策略（model_10000）",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/scripts/rsl_rl/play_amp.py",
-            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
-            "cwd": "${workspaceFolder}",
-            "console": "integratedTerminal",
-            "justMyCode": false,
-            "args": [
-                "--task",
-                "Unitree-b2z1-AMP-Rear-Vision-Play",
-                "--num_envs",
-                "1",
-                "--checkpoint",
-                "${workspaceFolder}/logs/rsl_rl/b2_z1_amp/2026-09-09_16-01-19_rear_vision_v3_gait_finetune_from9600/model_10000.pt",
-                "--enable_cameras",
-                "--real-time"
-            ],
-            "env": {
-                "B2_Z1_VISION_EXCHANGE": "/tmp/b2_z1_vision_bridge",
-                "B2_Z1_VISION_CAMERA": "front_depth",
-                "HYDRA_FULL_ERROR": "1",
-                "PYTHONUNBUFFERED": "1"
             }
         },
         {
@@ -360,6 +246,7 @@
                 "0.58",
                 "--min-image-v-span-ratio",
                 "0.20",
+                "--depth-shadow-filter",
                 "--save-overlay",
                 "--display"
             ],
@@ -459,6 +346,105 @@
             "env": {
                 "HYDRA_FULL_ERROR": "1",
                 "PYTHONUNBUFFERED": "1"
+            }
+        },
+        {
+            "name": "VA1：真值曲线播放（model_7000，当前诊断候选）",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/rsl_rl/play_amp.py",
+            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--task",
+                "Unitree-b2z1-AMP-VA1-Truth-Curve-Play",
+                "--checkpoint",
+                "${workspaceFolder}/logs/rsl_rl/b2_z1_amp/2026-09-22_09-01-10_va1/model_7000.pt",
+                "--num_envs",
+                "1",
+                "--real-time"
+            ],
+            "env": {
+                "HYDRA_FULL_ERROR": "1",
+                "PYTHONUNBUFFERED": "1",
+                "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"
+            }
+        },
+        {
+            "name": "VA3：防跪行真值曲线从头训练 8000 轮",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/rsl_rl/train_amp.py",
+            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--task",
+                "Unitree-b2z1-AMP-VA3-Truth-Curve",
+                "--num_envs",
+                "1024",
+                "--headless",
+                "--max_iterations",
+                "8000",
+                "--run_name",
+                "va3_anti_kneeling_from_scratch",
+                "agent.amp_cfg.amp_num_preload_transitions=20000"
+            ],
+            "env": {
+                "HYDRA_FULL_ERROR": "1",
+                "PYTHONUNBUFFERED": "1",
+                "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"
+            }
+        },
+        {
+            "name": "VA3 基线：真值曲线播放（机械臂往复问题待修）",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/rsl_rl/play_amp.py",
+            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--task",
+                "Unitree-b2z1-AMP-VA3-Truth-Curve-Play",
+                "--checkpoint",
+                "${workspaceFolder}/logs/rsl_rl/b2_z1_amp/2026-09-23_10-04-36_va3_anti_kneeling_from_scratch/model_3950.pt",
+                "--num_envs",
+                "1",
+                "--real-time"
+            ],
+            "env": {
+                "HYDRA_FULL_ERROR": "1",
+                "PYTHONUNBUFFERED": "1",
+                "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"
+            }
+        },
+        {
+            "name": "VA7：全身策略播放（手臂更稳，弯道偏航待修）",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/rsl_rl/play_amp.py",
+            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--task",
+                "Unitree-b2z1-AMP-VA7-Whole-Body-Play",
+                "--checkpoint",
+                "${workspaceFolder}/logs/rsl_rl/b2_z1_amp/2026-09-24_09-50-29_va7_whole_body_from_scratch/model_7999.pt",
+                "--num_envs",
+                "1",
+                "--real-time"
+            ],
+            "env": {
+                "HYDRA_FULL_ERROR": "1",
+                "PYTHONUNBUFFERED": "1",
+                "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"
             }
         },
         {
@@ -567,18 +553,10 @@
     ],
     "compounds": [
         {
-            "name": "后向视觉 V5：实际曲线裂缝完整闭环（一键启动）",
+            "name": "当前推荐 V19：视觉轨迹完整闭环（一键启动）",
             "configurations": [
                 "后向机械臂+视觉：启动 RHACrackNet 桥",
-                "后向视觉 V5：实际曲线裂缝视觉播放（model_10300）"
-            ],
-            "stopAll": true
-        },
-        {
-            "name": "后向机械臂+视觉：完整闭环播放（一键启动）",
-            "configurations": [
-                "后向机械臂+视觉：启动 RHACrackNet 桥",
-                "后向机械臂+视觉：播放V3步态最佳策略（model_10000）"
+                "当前推荐 V19：后向视觉轨迹播放（model_11449）"
             ],
             "stopAll": true
         }
