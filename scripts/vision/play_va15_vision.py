@@ -33,6 +33,7 @@ def main():
     parser.add_argument("--vision-device", default="cuda:0")
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--loaded-gun", action="store_true", help="Enable physical gun and effective hanging-hose load")
+    parser.add_argument("--bounded-hose", action="store_true", help="Use VB2 bounded-tether vision task")
     parser.add_argument("--max-steps", type=int, default=None)
     args = parser.parse_args()
     for path in (args.checkpoint, args.isaac_python, args.vision_python):
@@ -51,7 +52,8 @@ def main():
                   "--save-overlay", "--depth-shadow-filter"]
     if not args.headless:
         vision_cmd.append("--display")
-    task_name = ("Unitree-b2z1-AMP-VA15-Loaded-Gun-Vision-Play" if args.loaded_gun
+    task_name = ("Unitree-b2z1-AMP-VB2-Bounded-Hose-Vision-Play" if args.bounded_hose
+                 else "Unitree-b2z1-AMP-VA15-Loaded-Gun-Vision-Play" if args.loaded_gun
                  else "Unitree-b2z1-AMP-VA15-Vision-Play")
     play_cmd = [args.isaac_python, str(repo / "scripts/rsl_rl/play_amp.py"),
                 "--task", task_name, "--checkpoint", args.checkpoint,

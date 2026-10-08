@@ -29,6 +29,7 @@ class B2Z1LoadedGunAMPEnv(B2Z1ManagerAMPBasedRLEnv):
         self.hose_force_w = torch.zeros_like(self._last_hose_velocity_w)
         self.hose_torque_w = torch.zeros_like(self._last_hose_velocity_w)
         self.hose_tension_n = torch.zeros(self.num_envs, device=self.device)
+        self.hose_tension_raw_n = torch.zeros(self.num_envs, device=self.device)
         self._hose_mass_kg = torch.full((self.num_envs,), cfg.hose_effective_mass_kg, device=self.device)
         self._hose_slack_m = torch.full((self.num_envs,), cfg.hose_slack_length_m, device=self.device)
         self._hose_anchor_w = self.scene.env_origins + torch.tensor(
@@ -37,6 +38,7 @@ class B2Z1LoadedGunAMPEnv(B2Z1ManagerAMPBasedRLEnv):
         self._hose_force_sum_n = torch.zeros(self.num_envs, device=self.device)
         self._hose_torque_sum_nm = torch.zeros(self.num_envs, device=self.device)
         self._hose_tension_peak_n = torch.zeros(self.num_envs, device=self.device)
+        self._hose_tension_raw_peak_n = torch.zeros(self.num_envs, device=self.device)
         self._hose_sample_count = torch.zeros(self.num_envs, device=self.device)
         self._sample_hose_parameters(torch.arange(self.num_envs, device=self.device))
         self._physics_wrench_hook = self._update_hose_wrench
@@ -54,6 +56,7 @@ class B2Z1LoadedGunAMPEnv(B2Z1ManagerAMPBasedRLEnv):
             mean_force = (self._hose_force_sum_n[env_ids] / counts).mean().item()
             mean_torque = (self._hose_torque_sum_nm[env_ids] / counts).mean().item()
             peak_tension = self._hose_tension_peak_n[env_ids].max().item()
+            peak_raw_tension = self._hose_tension_raw_peak_n[env_ids].max().item()
         super()._reset_idx(env_ids)
         if hasattr(self, "_hose_velocity_initialized"):
             self._hose_velocity_initialized[env_ids] = False
@@ -65,10 +68,12 @@ class B2Z1LoadedGunAMPEnv(B2Z1ManagerAMPBasedRLEnv):
                 "VB1/hose_force_mean_n": mean_force,
                 "VB1/hose_torque_mean_nm": mean_torque,
                 "VB1/hose_tension_peak_n": peak_tension,
+                "VB2/hose_raw_tension_peak_n": peak_raw_tension,
             })
             self._hose_force_sum_n[env_ids] = 0.0
             self._hose_torque_sum_nm[env_ids] = 0.0
             self._hose_tension_peak_n[env_ids] = 0.0
+            self._hose_tension_raw_peak_n[env_ids] = 0.0
             self._hose_sample_count[env_ids] = 0.0
 
     def _sample_hose_parameters(self, env_ids):
@@ -122,13 +127,16 @@ class B2Z1LoadedGunAMPEnv(B2Z1ManagerAMPBasedRLEnv):
         cable_direction_w = to_anchor_w / cable_length.unsqueeze(-1)
         stretch_m = (cable_length - self._hose_slack_m).clamp_min(0.0)
         moving_away_mps = (-torch.sum(velocity_w * cable_direction_w, dim=-1)).clamp_min(0.0)
-        tension_n = torch.where(
+        raw_tension_n = torch.where(
             stretch_m > 0.0,
             self.cfg.hose_tension_stiffness_n_per_m * stretch_m
             + self.cfg.hose_tension_damping_ns_per_m * moving_away_mps,
             0.0,
         )
+        tension_cap_n = getattr(self.cfg, "hose_tension_max_n", None)
+        tension_n = raw_tension_n.clamp(max=tension_cap_n) if tension_cap_n is not None else raw_tension_n
         self.hose_tension_n[:] = tension_n
+        self.hose_tension_raw_n[:] = raw_tension_n
 
         # Weight acts at the upper connector. Its moment arm gives the Z1
         # shoulder/elbow a gravity torque; -m*a and drag add motion loading.
@@ -146,6 +154,7 @@ class B2Z1LoadedGunAMPEnv(B2Z1ManagerAMPBasedRLEnv):
         self._hose_force_sum_n += torch.linalg.vector_norm(force_w, dim=-1)
         self._hose_torque_sum_nm += torch.linalg.vector_norm(torque_w, dim=-1)
         self._hose_tension_peak_n = torch.maximum(self._hose_tension_peak_n, tension_n)
+        self._hose_tension_raw_peak_n = torch.maximum(self._hose_tension_raw_peak_n, raw_tension_n)
         self._hose_sample_count += 1.0
         robot.set_external_force_and_torque(
             forces=force_w.unsqueeze(1),

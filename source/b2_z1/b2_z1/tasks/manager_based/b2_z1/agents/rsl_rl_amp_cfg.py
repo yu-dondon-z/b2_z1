@@ -887,3 +887,16 @@ class AMPVB1LoadedGunRunnerCfg(AMPVA15CurriculumRunnerCfg):
         self.algorithm.learning_rate = 5.0e-5
         # Runner.learn interprets this as *additional* iterations after resume.
         self.max_iterations = 1000
+
+
+@configclass
+class AMPVB2BoundedHoseRunnerCfg(AMPVB1LoadedGunRunnerCfg):
+    """Short, conservative continuation from the screened VB1 checkpoint."""
+
+    run_name = "VB2_bounded_hose_from5300"
+    save_interval = 25
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.algorithm.learning_rate = 3.0e-5
+        self.max_iterations = 200

@@ -1685,3 +1685,33 @@ gym.register(
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_amp_cfg:AMPVB1LoadedGunRunnerCfg",
     },
 )
+
+gym.register(
+    id="Unitree-b2z1-AMP-VB2-Bounded-Hose",
+    entry_point="b2_z1.envs:B2Z1LoadedGunAMPEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.b2_z1_vb2_env_cfg:B2Z1VB2BoundedHoseAMPEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_amp_cfg:AMPVB2BoundedHoseRunnerCfg",
+    },
+)
+
+gym.register(
+    id="Unitree-b2z1-AMP-VB2-Bounded-Hose-Play",
+    entry_point="b2_z1.envs:B2Z1LoadedGunAMPEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.b2_z1_vb2_env_cfg:B2Z1VB2BoundedHoseAMPEnvCfg_Play",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_amp_cfg:AMPVB2BoundedHoseRunnerCfg",
+    },
+)
+
+gym.register(
+    id="Unitree-b2z1-AMP-VB2-Bounded-Hose-Vision-Play",
+    entry_point="b2_z1.envs:B2Z1LoadedGunAMPEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.b2_z1_vb2_env_cfg:B2Z1VB2BoundedHoseVisionAMPEnvCfg_Play",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_amp_cfg:AMPVB2BoundedHoseRunnerCfg",
+    },
+)

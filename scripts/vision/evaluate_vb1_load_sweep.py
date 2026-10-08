@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run fixed-load VB1 synthetic-curve checks and summarize motion traces."""
+"""Run fixed-load synthetic-curve checks and summarize motion traces."""
 
 import argparse
 import csv
@@ -25,7 +25,7 @@ def summarize(trace_path):
     metrics_to_check = (
         "base_x", "base_y", "base_z", "target_x", "target_y", "target_z",
         "actual_x", "actual_y", "actual_z", "path_lateral_error_b",
-        "hose_mass_kg", "hose_force_n", "hose_torque_nm", "hose_tension_n", "body_tilt_deg",
+        "hose_mass_kg", "hose_force_n", "hose_torque_nm", "hose_tension_n", "hose_tension_raw_n", "body_tilt_deg",
     )
     for index, row in enumerate(rows):
         if any(not math.isfinite(float(row[key])) for key in metrics_to_check):
@@ -56,6 +56,10 @@ def summarize(trace_path):
         "mean_hose_force_n": sum(float(row["hose_force_n"]) for row in rows) / len(rows),
         "max_hose_torque_nm": max(float(row["hose_torque_nm"]) for row in rows),
         "max_hose_tension_n": max(float(row["hose_tension_n"]) for row in rows),
+        "max_hose_tension_raw_n": max(float(row["hose_tension_raw_n"]) for row in rows),
+        "fraction_tension_capped": sum(
+            float(row["hose_tension_raw_n"]) > float(row["hose_tension_n"]) + 1.0e-3 for row in rows
+        ) / len(rows),
     }
 
 
@@ -63,6 +67,7 @@ def main():
     repo = Path(__file__).resolve().parents[2]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint", type=Path, required=True)
+    parser.add_argument("--task", default="Unitree-b2z1-AMP-VB1-Loaded-Gun-Play")
     parser.add_argument("--masses", type=float, nargs="+", default=[1, 3, 5, 7, 10])
     parser.add_argument("--max-steps", type=int, default=3000)
     parser.add_argument("--output-dir", type=Path)
@@ -75,28 +80,28 @@ def main():
     output_dir = args.output_dir or repo / "outputs" / f"vb1_load_sweep_{datetime.now():%Y%m%d_%H%M%S}"
     output_dir = output_dir.expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=False)
-    summary = {"checkpoint": str(checkpoint), "results": {}}
+    summary = {"checkpoint": str(checkpoint), "task": args.task, "results": {}}
     for mass in args.masses:
         label = f"{mass:g}kg"
         trace = output_dir / f"{label}.csv"
         log = output_dir / f"{label}.log"
         command = [
             sys.executable, str(repo / "scripts/rsl_rl/play_amp.py"),
-            "--task", "Unitree-b2z1-AMP-VB1-Loaded-Gun-Play",
+            "--task", args.task,
             "--checkpoint", str(checkpoint), "--num_envs", "1", "--headless",
             "--max-steps", str(args.max_steps), "--motion-trace-csv", str(trace),
         ]
         environment = os.environ.copy()
         environment["B2_Z1_HOSE_MASS_KG"] = str(mass)
-        print(f"[VB1] Checking {label}; log: {log}", flush=True)
+        print(f"[Load sweep] Checking {label}; log: {log}", flush=True)
         with log.open("w") as stream:
             result = subprocess.run(command, cwd=repo, env=environment, stdout=stream, stderr=subprocess.STDOUT)
         if result.returncode != 0 or not trace.is_file():
             raise RuntimeError(f"{label} playback failed; inspect {log}")
         summary["results"][label] = summarize(trace)
-        print(f"[VB1] {label}: {summary['results'][label]}", flush=True)
+        print(f"[Load sweep] {label}: {summary['results'][label]}", flush=True)
         (output_dir / "summary.json").write_text(json.dumps(summary, indent=2))
-    print(f"[VB1] Completed fixed-load sweep: {output_dir / 'summary.json'}", flush=True)
+    print(f"[Load sweep] Completed: {output_dir / 'summary.json'}", flush=True)
 
 
 if __name__ == "__main__":

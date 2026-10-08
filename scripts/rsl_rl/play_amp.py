@@ -335,9 +335,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                             torch.linalg.vector_norm(loaded_env.hose_force_w[0]).item(),
                             torch.linalg.vector_norm(loaded_env.hose_torque_w[0]).item(),
                             loaded_env.hose_tension_n[0].item(),
+                            loaded_env.hose_tension_raw_n[0].item(),
                         ]
                     else:
-                        hose_diagnostics = [None, None, None, None]
+                        hose_diagnostics = [None, None, None, None, None]
                     motion_trace.append(
                         [timestep * dt, *base.tolist(), *base_quat.tolist(), *target.tolist(), *actual.tolist(),
                          *command.tolist(), *robot.data.joint_pos[0, arm_joint_indices].tolist(),
@@ -408,7 +409,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                  *[f"joint{index}" for index in range(1, 7)],
                  "command_vx_b", "command_vy_b", "command_yaw_rate_b", "actual_yaw_rate_b",
                  "path_lateral_error_b", "path_heading_error_b",
-                 "hose_mass_kg", "hose_force_n", "hose_torque_nm", "hose_tension_n",
+                 "hose_mass_kg", "hose_force_n", "hose_torque_nm", "hose_tension_n", "hose_tension_raw_n",
                  "reset", "body_tilt_deg"]
             )
             writer.writerows(motion_trace)
