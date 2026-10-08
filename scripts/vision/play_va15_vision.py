@@ -32,6 +32,7 @@ def main():
     parser.add_argument("--vision-python", default="/home/dong/anaconda3/envs/crack_vision/bin/python")
     parser.add_argument("--vision-device", default="cuda:0")
     parser.add_argument("--headless", action="store_true")
+    parser.add_argument("--loaded-gun", action="store_true", help="Enable physical gun and effective hanging-hose load")
     parser.add_argument("--max-steps", type=int, default=None)
     args = parser.parse_args()
     for path in (args.checkpoint, args.isaac_python, args.vision_python):
@@ -50,8 +51,10 @@ def main():
                   "--save-overlay", "--depth-shadow-filter"]
     if not args.headless:
         vision_cmd.append("--display")
+    task_name = ("Unitree-b2z1-AMP-VA15-Loaded-Gun-Vision-Play" if args.loaded_gun
+                 else "Unitree-b2z1-AMP-VA15-Vision-Play")
     play_cmd = [args.isaac_python, str(repo / "scripts/rsl_rl/play_amp.py"),
-                "--task", "Unitree-b2z1-AMP-VA15-Vision-Play", "--checkpoint", args.checkpoint,
+                "--task", task_name, "--checkpoint", args.checkpoint,
                 "--num_envs", "1", "--enable_cameras", "--real-time"]
     if args.headless:
         play_cmd.append("--headless")

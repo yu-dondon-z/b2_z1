@@ -2,6 +2,18 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "VA15视觉：实体焊枪+软管负载（model_5000）",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/vision/play_va15_vision.py",
+            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "subProcess": false,
+            "args": ["--loaded-gun"],
+            "env": {"PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"}
+        },
+        {
             "name": "VA15视觉：裂缝跟踪（一键启动，model_5000）",
             "type": "debugpy",
             "request": "launch",

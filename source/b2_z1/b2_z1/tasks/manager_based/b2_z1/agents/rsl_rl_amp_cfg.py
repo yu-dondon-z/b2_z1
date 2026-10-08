@@ -873,3 +873,17 @@ class AMPVA15CurriculumRunnerCfg(AMPVA14FromScratchRunnerCfg):
         super().__post_init__()
         self.algorithm.learning_rate = 1.0e-4
         self.max_iterations = 5500
+
+
+@configclass
+class AMPVB1LoadedGunRunnerCfg(AMPVA15CurriculumRunnerCfg):
+    """Conservative VA15 continuation under episode-wise randomized hose load."""
+
+    run_name = "VB1_load_stage1"
+    save_interval = 50
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.algorithm.learning_rate = 5.0e-5
+        # Runner.learn interprets this as *additional* iterations after resume.
+        self.max_iterations = 1000

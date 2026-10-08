@@ -74,6 +74,10 @@ class B2Z1ManagerAMPBasedRLEnv(ManagerBasedRLEnv):
             self._sim_step_counter += 1
             # set actions into buffers
             self.action_manager.apply_action()
+            # Optional physical loads update at the physics rate, not the policy rate.
+            physics_wrench_hook = getattr(self, "_physics_wrench_hook", None)
+            if physics_wrench_hook is not None:
+                physics_wrench_hook()
             
             
             # set actions into simulator

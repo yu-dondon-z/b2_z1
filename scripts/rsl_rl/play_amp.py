@@ -328,13 +328,26 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                     target = path_command.tracking_pose_w[0, :3]
                     command = path_command.pose_command[0, :3]
                     base_command = env.unwrapped.command_manager.get_command("base_velocity")[0]
+                    loaded_env = env.unwrapped
+                    if hasattr(loaded_env, "hose_force_w"):
+                        hose_diagnostics = [
+                            loaded_env._hose_mass_kg[0].item(),
+                            torch.linalg.vector_norm(loaded_env.hose_force_w[0]).item(),
+                            torch.linalg.vector_norm(loaded_env.hose_torque_w[0]).item(),
+                            loaded_env.hose_tension_n[0].item(),
+                        ]
+                    else:
+                        hose_diagnostics = [None, None, None, None]
                     motion_trace.append(
                         [timestep * dt, *base.tolist(), *base_quat.tolist(), *target.tolist(), *actual.tolist(),
                          *command.tolist(), *robot.data.joint_pos[0, arm_joint_indices].tolist(),
                          base_command[0].item(), base_command[1].item(), base_command[2].item(),
                          robot.data.root_ang_vel_b[0, 2].item(),
                          path_command._path_lateral_error_b[0].item(),
-                         path_command._path_heading_error_b[0].item()]
+                         path_command._path_heading_error_b[0].item(),
+                         *hose_diagnostics,
+                         int(dones.reshape(-1)[0].item()),
+                         torch.rad2deg(torch.acos((-robot.data.projected_gravity_b[0, 2]).clamp(-1.0, 1.0))).item()]
                     )
             if arm_action_state is not None:
                 reset_mask = dones.to(dtype=torch.bool).reshape(-1)
@@ -394,7 +407,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                  "actual_x", "actual_y", "actual_z", "command_x_b", "command_y_b", "command_z_b",
                  *[f"joint{index}" for index in range(1, 7)],
                  "command_vx_b", "command_vy_b", "command_yaw_rate_b", "actual_yaw_rate_b",
-                 "path_lateral_error_b", "path_heading_error_b"]
+                 "path_lateral_error_b", "path_heading_error_b",
+                 "hose_mass_kg", "hose_force_n", "hose_torque_nm", "hose_tension_n",
+                 "reset", "body_tilt_deg"]
             )
             writer.writerows(motion_trace)
         print(f"[INFO] Wrote motion trace: {args_cli.motion_trace_csv}")
