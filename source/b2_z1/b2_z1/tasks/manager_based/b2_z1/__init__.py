@@ -1715,3 +1715,23 @@ gym.register(
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_amp_cfg:AMPVB2BoundedHoseRunnerCfg",
     },
 )
+
+gym.register(
+    id="Unitree-b2z1-AMP-VB3-Path-Balance",
+    entry_point="b2_z1.envs:B2Z1LoadedGunAMPEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.b2_z1_vb3_env_cfg:B2Z1VB3PathBalanceAMPEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_amp_cfg:AMPVB3PathBalanceRunnerCfg",
+    },
+)
+
+gym.register(
+    id="Unitree-b2z1-AMP-VB3-Path-Balance-Play",
+    entry_point="b2_z1.envs:B2Z1LoadedGunAMPEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.b2_z1_vb3_env_cfg:B2Z1VB3PathBalanceAMPEnvCfg_Play",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_amp_cfg:AMPVB3PathBalanceRunnerCfg",
+    },
+)

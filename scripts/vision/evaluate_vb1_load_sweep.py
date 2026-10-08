@@ -90,6 +90,10 @@ def main():
             "--task", args.task,
             "--checkpoint", str(checkpoint), "--num_envs", "1", "--headless",
             "--max-steps", str(args.max_steps), "--motion-trace-csv", str(trace),
+            # Headless metrics do not need remote USD arrow markers. Disabling
+            # them also avoids a network-dependent startup failure.
+            "env.commands.base_velocity.debug_vis=false",
+            "env.commands.ee_target.debug_vis=false",
         ]
         environment = os.environ.copy()
         environment["B2_Z1_HOSE_MASS_KG"] = str(mass)

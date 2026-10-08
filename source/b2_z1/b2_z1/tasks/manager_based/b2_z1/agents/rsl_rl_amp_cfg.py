@@ -900,3 +900,15 @@ class AMPVB2BoundedHoseRunnerCfg(AMPVB1LoadedGunRunnerCfg):
         super().__post_init__()
         self.algorithm.learning_rate = 3.0e-5
         self.max_iterations = 200
+
+
+@configclass
+class AMPVB3PathBalanceRunnerCfg(AMPVB2BoundedHoseRunnerCfg):
+    """Short path-tracking continuation without changing the actor layout."""
+
+    run_name = "VB3_path_balance_from5400"
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.algorithm.learning_rate = 2.0e-5
+        self.max_iterations = 300
