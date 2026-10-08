@@ -1735,3 +1735,23 @@ gym.register(
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_amp_cfg:AMPVB3PathBalanceRunnerCfg",
     },
 )
+
+gym.register(
+    id="Unitree-b2z1-AMP-VB4-Payout",
+    entry_point="b2_z1.envs:B2Z1LoadedGunAMPEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.b2_z1_vb4_env_cfg:B2Z1VB4PayoutAMPEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_amp_cfg:AMPVB4PayoutRunnerCfg",
+    },
+)
+
+gym.register(
+    id="Unitree-b2z1-AMP-VB4-Payout-Play",
+    entry_point="b2_z1.envs:B2Z1LoadedGunAMPEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.b2_z1_vb4_env_cfg:B2Z1VB4PayoutAMPEnvCfg_Play",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_amp_cfg:AMPVB4PayoutRunnerCfg",
+    },
+)

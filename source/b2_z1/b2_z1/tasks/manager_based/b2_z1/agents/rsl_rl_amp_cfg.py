@@ -912,3 +912,16 @@ class AMPVB3PathBalanceRunnerCfg(AMPVB2BoundedHoseRunnerCfg):
         super().__post_init__()
         self.algorithm.learning_rate = 2.0e-5
         self.max_iterations = 300
+
+
+@configclass
+class AMPVB4PayoutRunnerCfg(AMPVA15CurriculumRunnerCfg):
+    """Short VA15 continuation with load but without arbitrary anchor pull."""
+
+    run_name = "VB4_payout_fromVA15_5000"
+    save_interval = 25
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.algorithm.learning_rate = 2.0e-5
+        self.max_iterations = 200
