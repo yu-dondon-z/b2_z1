@@ -925,3 +925,14 @@ class AMPVB4PayoutRunnerCfg(AMPVA15CurriculumRunnerCfg):
         super().__post_init__()
         self.algorithm.learning_rate = 2.0e-5
         self.max_iterations = 200
+
+
+@configclass
+class AMPVB5PayoutStage2RunnerCfg(AMPVB4PayoutRunnerCfg):
+    """Gradually extend the effective hose load without changing the policy."""
+
+    run_name = "VB5_payout_stage2_from5199"
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.max_iterations = 250

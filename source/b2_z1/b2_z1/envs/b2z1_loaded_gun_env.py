@@ -51,6 +51,16 @@ class B2Z1LoadedGunAMPEnv(B2Z1ManagerAMPBasedRLEnv):
         )
 
     def _reset_idx(self, env_ids):
+        # Playback tracing can request the state immediately before auto-reset.
+        # Post-step observations alone would hide the terminal fall/crouch.
+        if getattr(self, "_record_terminal_motion", False):
+            robot = self.scene["robot"]
+            self._trace_terminal_height[env_ids] = (
+                robot.data.root_pos_w[env_ids, 2] - self.scene.env_origins[env_ids, 2]
+            )
+            self._trace_terminal_tilt_deg[env_ids] = torch.rad2deg(torch.acos(
+                (-robot.data.projected_gravity_b[env_ids, 2]).clamp(-1.0, 1.0)
+            ))
         if hasattr(self, "_hose_mass_kg"):
             counts = self._hose_sample_count[env_ids].clamp_min(1.0)
             mean_force = (self._hose_force_sum_n[env_ids] / counts).mean().item()

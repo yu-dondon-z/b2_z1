@@ -39,7 +39,9 @@ def summarize(trace_path):
             for axis in ("x", "y", "z")
         )))
         lateral_errors.append(abs(float(row["path_lateral_error_b"])))
-        if index:
+        # Auto-reset teleports the robot to its start pose; that jump is not
+        # locomotion travel. The next step starts a new continuous segment.
+        if index and not int(row["reset"]):
             prev = rows[index - 1]
             travel_m += math.hypot(
                 float(row["base_x"]) - float(prev["base_x"]),
@@ -50,9 +52,20 @@ def summarize(trace_path):
         "sim_time_s": float(rows[-1]["time_s"]),
         "base_travel_xy_m": travel_m,
         "resets": sum(int(row["reset"]) for row in rows),
+        "termination_counts": {
+            key.removeprefix("termination_"): sum(int(row[key]) for row in rows)
+            for key in rows[0] if key.startswith("termination_")
+        },
         "tcp_error_p95_m": percentile(tcp_errors, 0.95),
         "lateral_error_p95_m": percentile(lateral_errors, 0.95),
-        "max_body_tilt_deg": max(float(row["body_tilt_deg"]) for row in rows),
+        "max_body_tilt_deg": max(
+            [float(row["body_tilt_deg"]) for row in rows]
+            + [float(row["terminal_tilt_deg"]) for row in rows if row.get("terminal_tilt_deg")]
+        ),
+        "minimum_terminal_base_height_m": min(
+            (float(row["terminal_base_height_m"]) for row in rows if row.get("terminal_base_height_m")),
+            default=None,
+        ),
         "mean_hose_force_n": sum(float(row["hose_force_n"]) for row in rows) / len(rows),
         "max_hose_torque_nm": max(float(row["hose_torque_nm"]) for row in rows),
         "max_hose_tension_n": max(float(row["hose_tension_n"]) for row in rows),
@@ -70,6 +83,9 @@ def main():
     parser.add_argument("--task", default="Unitree-b2z1-AMP-VB1-Loaded-Gun-Play")
     parser.add_argument("--masses", type=float, nargs="+", default=[1, 3, 5, 7, 10])
     parser.add_argument("--max-steps", type=int, default=3000)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--arc-direction", choices=("left", "right"), default=None)
+    parser.add_argument("--arc-radius", type=float, default=None)
     parser.add_argument("--output-dir", type=Path)
     args = parser.parse_args()
     checkpoint = args.checkpoint.expanduser().resolve()
@@ -77,10 +93,14 @@ def main():
         parser.error(f"Checkpoint not found: {checkpoint}")
     if args.max_steps <= 0 or any(not 1.0 <= mass <= 10.0 for mass in args.masses):
         parser.error("Need positive --max-steps and hose masses within [1, 10] kg")
+    if args.arc_radius is not None and (not math.isfinite(args.arc_radius) or args.arc_radius <= 0):
+        parser.error("--arc-radius must be finite and positive")
     output_dir = args.output_dir or repo / "outputs" / f"vb1_load_sweep_{datetime.now():%Y%m%d_%H%M%S}"
     output_dir = output_dir.expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=False)
-    summary = {"checkpoint": str(checkpoint), "task": args.task, "results": {}}
+    summary = {"checkpoint": str(checkpoint), "task": args.task, "seed": args.seed,
+               "arc_direction_override": args.arc_direction, "arc_radius_override_m": args.arc_radius,
+               "results": {}}
     for mass in args.masses:
         label = f"{mass:g}kg"
         trace = output_dir / f"{label}.csv"
@@ -90,11 +110,18 @@ def main():
             "--task", args.task,
             "--checkpoint", str(checkpoint), "--num_envs", "1", "--headless",
             "--max-steps", str(args.max_steps), "--motion-trace-csv", str(trace),
+            "--seed", str(args.seed),
             # Headless metrics do not need remote USD arrow markers. Disabling
             # them also avoids a network-dependent startup failure.
             "env.commands.base_velocity.debug_vis=false",
             "env.commands.ee_target.debug_vis=false",
         ]
+        if args.arc_direction:
+            command.append(f"env.commands.ee_target.synthetic_arc_direction={args.arc_direction}")
+        if args.arc_radius is not None:
+            command.append(
+                f"env.commands.ee_target.synthetic_arc_radius_range_m=[{args.arc_radius},{args.arc_radius}]"
+            )
         environment = os.environ.copy()
         environment["B2_Z1_HOSE_MASS_KG"] = str(mass)
         print(f"[Load sweep] Checking {label}; log: {log}", flush=True)

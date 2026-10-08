@@ -2,6 +2,70 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "VB4：视觉低负载精度对比（5199，3kg）",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/vision/play_va15_vision.py",
+            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "subProcess": false,
+            "args": [
+                "--payout", "--checkpoint", "${workspaceFolder}/logs/rsl_rl/b2_z1_amp/2026-10-08_14-49-38_VB4_payout_fromVA15_5000/model_5199.pt",
+                "--episode-length-s", "600", "--max-steps", "15000"
+            ],
+            "env": {"B2_Z1_HOSE_MASS_KG": "3", "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"}
+        },
+        {
+            "name": "VB5：软管负载曲线播放（5448，5kg）",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/rsl_rl/play_amp.py",
+            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--task", "Unitree-b2z1-AMP-VB5-Payout-Stage2-Play",
+                "--checkpoint", "${workspaceFolder}/logs/rsl_rl/b2_z1_amp/2026-10-08_16-32-48_VB5_payout_stage2_from5199_complete/model_5448.pt",
+                "--num_envs", "1", "--real-time", "--max-steps", "15000",
+                "env.episode_length_s=600.0"
+            ],
+            "env": {"B2_Z1_HOSE_MASS_KG": "5", "HYDRA_FULL_ERROR": "1", "PYTHONUNBUFFERED": "1"}
+        },
+        {
+            "name": "VB5：视觉裂缝＋焊枪负载（5448，3kg）",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/vision/play_va15_vision.py",
+            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "subProcess": false,
+            "args": [
+                "--payout", "--checkpoint", "${workspaceFolder}/logs/rsl_rl/b2_z1_amp/2026-10-08_16-32-48_VB5_payout_stage2_from5199_complete/model_5448.pt",
+                "--episode-length-s", "600", "--max-steps", "15000"
+            ],
+            "env": {"B2_Z1_HOSE_MASS_KG": "3", "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"}
+        },
+        {
+            "name": "VB4：低负载精度对比（5199，3kg）",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/rsl_rl/play_amp.py",
+            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--task", "Unitree-b2z1-AMP-VB5-Payout-Stage2-Play",
+                "--checkpoint", "${workspaceFolder}/logs/rsl_rl/b2_z1_amp/2026-10-08_14-49-38_VB4_payout_fromVA15_5000/model_5199.pt",
+                "--num_envs", "1", "--real-time", "--max-steps", "15000",
+                "env.episode_length_s=600.0"
+            ],
+            "env": {"B2_Z1_HOSE_MASS_KG": "3", "HYDRA_FULL_ERROR": "1", "PYTHONUNBUFFERED": "1"}
+        },
+        {
             "name": "VA15视觉：实体焊枪+软管负载（model_5000）",
             "type": "debugpy",
             "request": "launch",

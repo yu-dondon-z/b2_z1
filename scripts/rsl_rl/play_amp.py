@@ -266,6 +266,11 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         if arm_action_indices is not None or args_cli.motion_trace_csv else None
     )
     motion_trace = []
+    trace_termination_names = list(env.unwrapped.termination_manager.active_terms) if args_cli.motion_trace_csv else []
+    if args_cli.motion_trace_csv and hasattr(env.unwrapped, "hose_force_w"):
+        env.unwrapped._record_terminal_motion = True
+        env.unwrapped._trace_terminal_height = torch.zeros(env.unwrapped.num_envs, device=env.unwrapped.device)
+        env.unwrapped._trace_terminal_tilt_deg = torch.zeros_like(env.unwrapped._trace_terminal_height)
     # simulate environment
     while simulation_app.is_running():
         start_time = time.time()
@@ -348,7 +353,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                          path_command._path_heading_error_b[0].item(),
                          *hose_diagnostics,
                          int(dones.reshape(-1)[0].item()),
-                         torch.rad2deg(torch.acos((-robot.data.projected_gravity_b[0, 2]).clamp(-1.0, 1.0))).item()]
+                         torch.rad2deg(torch.acos((-robot.data.projected_gravity_b[0, 2]).clamp(-1.0, 1.0))).item(),
+                         *[int(bool(dones.reshape(-1)[0].item()) and
+                               env.unwrapped.termination_manager.get_term(name)[0].item())
+                           for name in trace_termination_names],
+                         loaded_env._trace_terminal_height[0].item() if hasattr(loaded_env, "_trace_terminal_height") and dones[0] else None,
+                         loaded_env._trace_terminal_tilt_deg[0].item() if hasattr(loaded_env, "_trace_terminal_tilt_deg") and dones[0] else None]
                     )
             if arm_action_state is not None:
                 reset_mask = dones.to(dtype=torch.bool).reshape(-1)
@@ -410,7 +420,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                  "command_vx_b", "command_vy_b", "command_yaw_rate_b", "actual_yaw_rate_b",
                  "path_lateral_error_b", "path_heading_error_b",
                  "hose_mass_kg", "hose_force_n", "hose_torque_nm", "hose_tension_n", "hose_tension_raw_n",
-                 "reset", "body_tilt_deg"]
+                 "reset", "body_tilt_deg", *[f"termination_{name}" for name in trace_termination_names],
+                 "terminal_base_height_m", "terminal_tilt_deg"]
             )
             writer.writerows(motion_trace)
         print(f"[INFO] Wrote motion trace: {args_cli.motion_trace_csv}")
