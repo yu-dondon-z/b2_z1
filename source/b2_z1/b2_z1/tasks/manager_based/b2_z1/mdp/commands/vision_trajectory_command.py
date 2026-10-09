@@ -830,6 +830,10 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         if self.cfg.use_capture_pose:
             target_w = self._cached_path_w[index].clone()
             target_w[2] += self.cfg.tool_height_m + self.cfg.file_surface_offset_m
+            if self.cfg.file_road_surface_z_w_m is not None:
+                # Optional known flat simulation road height. Do not confuse
+                # noisy trench depth/capture projection with tool standoff.
+                target_w[2] = self.cfg.file_road_surface_z_w_m + self.cfg.tool_height_m
             target_b = quat_apply_inverse(base_quat_w.unsqueeze(0), (target_w - base_pos_w).unsqueeze(0))[0]
         else:
             target_b[2] += self.cfg.tool_height_m
@@ -884,7 +888,20 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         step_scale = torch.clamp(
             max_step / delta_norm.clamp_min(1.0e-8), max=1.0
         )
-        self._set_pose_command_b(self.pose_command[:, :3] + delta * step_scale)
+        filtered_b = self.pose_command[:, :3] + delta * step_scale
+        if self.cfg.file_target_height_filter_in_world_frame and self.cfg.use_capture_pose:
+            # Stabilize only world height, preserving the original planar
+            # handoff. Applying the body-frame speed cap to world XY would
+            # make the target lag behind a robot moving faster than that cap.
+            base_pos_w = self.robot.data.body_pos_w[:, self.base_idx]
+            base_quat_w = self.robot.data.body_state_w[:, self.base_idx, 3:7]
+            desired_w = base_pos_w + quat_apply(base_quat_w, desired_position_b)
+            previous_z_w = self.tracking_pose_w[:, 2]
+            filtered_w = base_pos_w + quat_apply(base_quat_w, filtered_b)
+            delta_z_w = (alpha * (desired_w[:, 2] - previous_z_w)).clamp(-max_step, max_step)
+            filtered_w[:, 2] = previous_z_w + delta_z_w
+            filtered_b = quat_apply_inverse(base_quat_w, filtered_w - base_pos_w)
+        self._set_pose_command_b(filtered_b)
         self._file_hold_position_b[:] = self.pose_command[:, :3]
 
     def _write_controller_status(self):
@@ -1193,6 +1210,8 @@ class RearVisionTrajectoryCommandCfg(UniformPoseWBCCommandCfg):
     mode: Literal["synthetic", "file"] = "synthetic"
     use_capture_pose: bool = False
     file_surface_offset_m: float = 0.0
+    file_road_surface_z_w_m: float | None = None
+    file_target_height_filter_in_world_frame: bool = False
     trajectory_file: str = ""
     vision_camera_name: str = "front_depth"
     vision_exchange_directory: str = "/tmp/b2_z1_vision_bridge"

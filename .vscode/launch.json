@@ -2,7 +2,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "VB6：视觉局部中心线引导（VB4-5199，3kg）",
+            "name": "VB6：视觉局部中心线＋TCP离地1cm（VB4-5199，3kg）",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/scripts/vision/play_va15_vision.py",

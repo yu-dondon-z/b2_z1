@@ -49,7 +49,7 @@ Evidence:
 
 ## Playback
 
-VS Code F5: `VB6：视觉局部中心线引导（VB4-5199，3kg）`.
+VS Code F5: `VB6：视觉局部中心线＋TCP离地1cm（VB4-5199，3kg）`.
 
 ```bash
 cd /home/dong/b2_z1
@@ -62,3 +62,36 @@ B2_Z1_HOSE_MASS_KG=3 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 
 Ctrl+C stops both owned playback and segmentation subprocesses. No real
 robot control or GitHub upload was performed.
+
+## Subsequent requested TCP-height adjustment
+
+The original active-tracking actual gun TCP height averaged 7.45 mm;
+p05–p95 was 6.88–8.52 mm. The tracked point is the downward extended
+gun TCP (`dummy_target`), not the arm flange. The old target averaged
+100.96 mm above the road, explaining most of the XYZ target error.
+
+Current payout visual playback uses `tool_height_m=0.01`. It additionally
+smooths world height, leaving the original body-relative planar filtering
+unchanged, to avoid converting base bobbing into target-height oscillation.
+For this known flat simulation only, `file_road_surface_z_w_m=0.0` anchors
+the height to the actual road surface. Otherwise projected trench-depth
+noise and bias shifts the requested 1 cm standoff. Generic commands keep
+this override at None, and training/synthetic playback remain unchanged.
+An unknown/uneven real road needs a validated surface-height estimate;
+do not copy the fixed world z=0 assumption into real deployment.
+
+Intermediate 60 s tests at 3 kg had no resets. Merely reducing tool_height
+while retaining body-frame filtering produced mean target z=2.02 cm and
+occasional below-road targets. World-height filtering removed the below-road
+excursions in the steady window but the projected-surface bias remained
+(mean target z=2.18 cm). These intermediate variants are not the final config.
+
+Final known-road configuration: 30 s camera/segmentation replay, 3 kg,
+VB4 5199, zero resets, maximum tilt 3.72 degrees. In the settled 13–30 s
+window, mean target height was 10.001 mm (p05–p95: 10.000–10.004 mm),
+actual TCP mean height 7.032 mm (p05–p95: 6.852–7.195 mm), and absolute
+height error mean/p95 2.969/3.149 mm. XYZ target error mean/p95 was
+2.16/4.04 cm. The whole 30 s base-to-crack p95 was 4.55 cm.
+The final variant has not yet repeated the preceding 60 s/multi-load tests;
+do not treat shorter-window improvements as a directly matched benchmark.
+Evidence: `outputs/vb6_tcp_1cm_known_road_vb4_3kg`.

@@ -34,3 +34,11 @@ class B2Z1VB5PayoutVisionAMPEnvCfg_Play(B2Z1VA15LoadedGunVisionAMPEnvCfg_Play):
         self.hose_tension_stiffness_n_per_m = 0.0
         self.hose_tension_damping_ns_per_m = 0.0
         self.commands.base_velocity.debug_vis = False
+        # VB6 visual playback: road-surface standoff near the measured TCP
+        # height (~7.5 mm). Keep the trench-bottom-to-road offset unchanged.
+        # Training and synthetic-play command distributions are not modified.
+        self.commands.ee_target.tool_height_m = 0.01
+        self.commands.ee_target.file_target_height_filter_in_world_frame = True
+        # This flat simulation road is at world z=0. Avoid perceived trench
+        # depth noise moving the 1 cm standoff above/below the actual surface.
+        self.commands.ee_target.file_road_surface_z_w_m = 0.0
