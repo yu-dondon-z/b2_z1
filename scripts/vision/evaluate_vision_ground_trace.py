@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Measure a visual-play trace against the actual seamless-road crack mesh.
 
-File-mode path_lateral_error_b is a forward lookahead coordinate, whereas
-synthetic mode records a base cross-track error. This independent geometry
-check avoids conflating those quantities. Defaults match SeamlessCrackedRoadHalfCfg
+Before VB6, file-mode path_lateral_error_b was a forward lookahead coordinate.
+VB6 instead estimates local cross-track error from camera/cache points. This
+independent geometry check does not depend on either controller definition.
+Defaults match SeamlessCrackedRoadHalfCfg
 for a single environment at world origin; record overrides for other scenes.
 """
 

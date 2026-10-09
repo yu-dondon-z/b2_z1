@@ -10,6 +10,7 @@ import time
 from typing import TYPE_CHECKING, Literal
 
 import torch
+from .path_guidance import cached_local_geometry, local_path_geometry
 from isaaclab.utils import configclass
 from isaaclab.utils.math import (
     quat_apply,
@@ -742,32 +743,40 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
             self._handle_file_command_loss()
             return
 
+        base_pos_w = self.robot.data.body_pos_w[0, self.base_idx]
+        base_quat_w = self.robot.data.body_state_w[0, self.base_idx, 3:7]
+        cached_b = quat_apply_inverse(
+            base_quat_w.unsqueeze(0).expand(len(self._cached_path_w), -1),
+            self._cached_path_w - base_pos_w.unsqueeze(0),
+        )
+
         # The current RGB-D path is in the instantaneous B2 frame. Its tangent
         # controls locomotion forward; it is intentionally independent of the
         # rear tool target position.
-        tangent_b = self._latest_path_b[-1, :2] - self._latest_path_b[0, :2]
-        if tangent_b[0] < 0.0:
-            tangent_b = -tangent_b
-        tangent_b = tangent_b / torch.linalg.norm(tangent_b).clamp_min(1.0e-6)
+        try:
+            tangent_b, lateral_error = local_path_geometry(self._latest_path_b)
+        except ValueError:
+            self._handle_file_command_loss()
+            return
+        cached_geometry = cached_local_geometry(cached_b)
+        if cached_geometry is not None:
+            tangent_b, lateral_error = cached_geometry
         if tangent_b[0] < self.cfg.minimum_forward_tangent:
             self._handle_file_command_loss()
             return
-        # Pure-pursuit correction combines the local crack tangent with the
-        # lateral error at a forward look-ahead point. It corrects both yaw
-        # and parallel offset; following tangent alone cannot return to a
-        # straight crack after drifting sideways.
+        # Match synthetic guidance: local tangent plus normal cross-track
+        # correction. Lookahead y already includes the tangent's yaw and
+        # adding it again double-counts heading on oblique/curved paths.
         forward_points = self._latest_path_b[self._latest_path_b[:, 0] > 0.10]
         if len(forward_points) == 0:
             self._handle_file_command_loss()
             return
-        lookahead_index = torch.argmin(
-            torch.abs(forward_points[:, 0] - self.cfg.path_lookahead_m)
-        )
-        lookahead = forward_points[lookahead_index]
-        self._path_lateral_error_b[0] = lookahead[1]
+        self._path_lateral_error_b[0] = lateral_error
         tangent_heading = torch.atan2(tangent_b[1], tangent_b[0])
+        self._path_heading_error_b[0] = tangent_heading
         cross_track_heading = torch.atan2(
-            self.cfg.cross_track_gain * lookahead[1], lookahead[0].clamp_min(0.10)
+            self.cfg.cross_track_gain * lateral_error,
+            torch.full_like(lateral_error, self.cfg.path_lookahead_m),
         )
         raw_heading = (tangent_heading + cross_track_heading).clamp(-1.2, 1.2)
         alpha = self.cfg.path_heading_filter_alpha
@@ -796,12 +805,6 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         desired_velocity_b *= start_blend.unsqueeze(1)
         self._filter_file_velocity_command(desired_velocity_b)
 
-        base_pos_w = self.robot.data.body_pos_w[0, self.base_idx]
-        base_quat_w = self.robot.data.body_state_w[0, self.base_idx, 3:7]
-        cached_b = quat_apply_inverse(
-            base_quat_w.unsqueeze(0).expand(len(self._cached_path_w), -1),
-            self._cached_path_w - base_pos_w.unsqueeze(0),
-        )
         keep = cached_b[:, 0] >= self.cfg.prune_behind_x_m
         self._cached_path_w = self._cached_path_w[keep]
         cached_b = cached_b[keep]
@@ -931,6 +934,8 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
                 self.robot.data.projected_gravity_b[0].detach().cpu().tolist()
             ),
             "path_lateral_error_b_m": float(self._path_lateral_error_b[0].item()),
+            "path_heading_error_b_rad": float(self._path_heading_error_b[0].item()),
+            "path_guidance": "local_cached_tangent_cross_track_vb6",
             "tool_target_position_b": self.pose_command[0, :3].detach().cpu().tolist(),
             "tool_actual_position_b": actual_tool_pos_b.detach().cpu().tolist(),
             "tool_target_minus_actual_b": tool_error_b.detach().cpu().tolist(),

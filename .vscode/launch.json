@@ -2,6 +2,21 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "VB6：视觉局部中心线引导（VB4-5199，3kg）",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/vision/play_va15_vision.py",
+            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "subProcess": false,
+            "args": [
+                "--payout", "--checkpoint", "${workspaceFolder}/logs/rsl_rl/b2_z1_amp/2026-10-08_14-49-38_VB4_payout_fromVA15_5000/model_5199.pt",
+                "--episode-length-s", "600", "--max-steps", "15000"
+            ],
+            "env": {"B2_Z1_HOSE_MASS_KG": "3", "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"}
+        },
+        {
             "name": "VB4：视觉低负载精度对比（5199，3kg）",
             "type": "debugpy",
             "request": "launch",
