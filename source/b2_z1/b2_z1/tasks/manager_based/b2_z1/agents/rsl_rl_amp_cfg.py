@@ -936,3 +936,14 @@ class AMPVB5PayoutStage2RunnerCfg(AMPVB4PayoutRunnerCfg):
     def __post_init__(self):
         super().__post_init__()
         self.max_iterations = 250
+
+
+@configclass
+class AMPVB7LoadRobustRunnerCfg(AMPVB4PayoutRunnerCfg):
+    run_name = "VB7_load_robust_long"
+    save_interval = 100
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.max_iterations = 8000
+        self.algorithm.learning_rate = 3.0e-5

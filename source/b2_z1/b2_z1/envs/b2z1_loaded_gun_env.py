@@ -31,6 +31,7 @@ class B2Z1LoadedGunAMPEnv(B2Z1ManagerAMPBasedRLEnv):
         self.hose_tension_n = torch.zeros(self.num_envs, device=self.device)
         self.hose_tension_raw_n = torch.zeros(self.num_envs, device=self.device)
         self._hose_mass_kg = torch.full((self.num_envs,), cfg.hose_effective_mass_kg, device=self.device)
+        self._hose_drag = torch.full((self.num_envs,), cfg.hose_linear_drag_ns_per_m, device=self.device)
         self._hose_slack_m = torch.full((self.num_envs,), cfg.hose_slack_length_m, device=self.device)
         self._hose_anchor_w = self.scene.env_origins + torch.tensor(
             cfg.hose_truck_anchor_env_m, device=self.device, dtype=torch.float32
@@ -80,6 +81,12 @@ class B2Z1LoadedGunAMPEnv(B2Z1ManagerAMPBasedRLEnv):
                 "VB1/hose_tension_peak_n": peak_tension,
                 "VB2/hose_raw_tension_peak_n": peak_raw_tension,
             })
+            if hasattr(self, "_vb7_gun_mass_kg"):
+                self.extras["log"].update({
+                    "VB7/gun_mass_kg": self._vb7_gun_mass_kg[env_ids].mean().item(),
+                    "VB7/light_payload_fraction": self._vb7_light_payload_mask[env_ids].float().mean().item(),
+                    "VB7/zero_hose_fraction": (self._hose_mass_kg[env_ids] == 0).float().mean().item(),
+                })
             self._hose_force_sum_n[env_ids] = 0.0
             self._hose_torque_sum_nm[env_ids] = 0.0
             self._hose_tension_peak_n[env_ids] = 0.0
@@ -95,6 +102,16 @@ class B2Z1LoadedGunAMPEnv(B2Z1ManagerAMPBasedRLEnv):
         else:
             low, high = mass_range
             self._hose_mass_kg[env_ids] = low + (high - low) * torch.rand(count, device=self.device)
+        drag_range = getattr(self.cfg, "hose_drag_range_ns_per_m", None)
+        if drag_range is not None:
+            low_drag, high_drag = drag_range
+            self._hose_drag[env_ids] = low_drag + (high_drag - low_drag) * torch.rand(count, device=self.device)
+        zero_probability = getattr(self.cfg, "hose_zero_load_probability", 0.0)
+        zero = torch.rand(count, device=self.device) < zero_probability if zero_probability else torch.zeros(count, device=self.device, dtype=torch.bool)
+        if hasattr(self, "_vb7_light_payload_mask"):
+            zero |= self._vb7_light_payload_mask[env_ids]
+        self._hose_mass_kg[env_ids[zero]] = 0.0
+        self._hose_drag[env_ids[zero]] = 0.0
         jitter = getattr(self.cfg, "hose_anchor_jitter_m", (0.0, 0.0, 0.0))
         anchor_center = torch.tensor(self.cfg.hose_truck_anchor_env_m, device=self.device)
         anchor_jitter = torch.tensor(jitter, device=self.device)
@@ -152,7 +169,7 @@ class B2Z1LoadedGunAMPEnv(B2Z1ManagerAMPBasedRLEnv):
         # shoulder/elbow a gravity torque; -m*a and drag add motion loading.
         force_w = (
             -self._hose_mass_kg.unsqueeze(-1) * acceleration_w
-            - self.cfg.hose_linear_drag_ns_per_m * velocity_w
+            - self._hose_drag.unsqueeze(-1) * velocity_w
             + tension_n.unsqueeze(-1) * cable_direction_w
         )
         force_w[:, 2] -= self._hose_mass_kg * abs(float(self.cfg.sim.gravity[2]))

@@ -5,6 +5,16 @@
 
 import gymnasium as gym
 
+gym.register(
+    id="Unitree-b2z1-AMP-VB7-Load-Robust",
+    entry_point="b2_z1.envs.b2z1_loaded_gun_env:B2Z1LoadedGunAMPEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.b2_z1_vb7_env_cfg:B2Z1VB7LoadRobustAMPEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{__name__}.agents.rsl_rl_amp_cfg:AMPVB7LoadRobustRunnerCfg",
+    },
+)
+
 from . import agents
 
 ##
