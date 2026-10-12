@@ -15,6 +15,7 @@ from isaaclab.utils import configclass
 from isaaclab.utils.math import (
     quat_apply,
     quat_apply_inverse,
+    quat_conjugate,
     quat_from_euler_xyz,
     quat_mul,
     wrap_to_pi,
@@ -234,7 +235,17 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         values = torch.full((self.num_envs,), roll, device=self.device)
         pitches = torch.full((self.num_envs,), pitch, device=self.device)
         yaws = torch.full((self.num_envs,), yaw, device=self.device)
-        return quat_from_euler_xyz(values, pitches, yaws)
+        nominal_b = quat_from_euler_xyz(values, pitches, yaws)
+        if not self.cfg.tool_orientation_gravity_aligned:
+            return nominal_b
+        # VB8: keep the gun level relative to gravity, while yaw follows B2.
+        # A body-fixed orientation otherwise commands the gun to reproduce
+        # every torso roll/pitch even when its world position is fixed.
+        base_quat_w = self.robot.data.body_state_w[:, self.base_idx, 3:7]
+        heading_w = self.robot.data.heading_w
+        zeros = torch.zeros_like(heading_w)
+        yaw_w = quat_from_euler_xyz(zeros, zeros, heading_w)
+        return quat_mul(quat_conjugate(base_quat_w), quat_mul(yaw_w, nominal_b))
 
     def _set_pose_command_b(self, position_b: torch.Tensor):
         # A world-fixed crack can temporarily lie outside the arm workspace
@@ -1232,6 +1243,8 @@ class RearVisionTrajectoryCommandCfg(UniformPoseWBCCommandCfg):
     # derives target height from the current world-frame base pose.
     synthetic_ground_z_b_m: float = -0.45
     tool_orientation_rpy: tuple[float, float, float] = (0.0, math.pi / 2.0, math.pi)
+    # Opt-in new training contract; historical VA/VB checkpoints keep False.
+    tool_orientation_gravity_aligned: bool = False
     path_speed_mps: float = 0.25
     path_heading_gain: float = 1.5
     max_yaw_rate_rps: float = 0.5

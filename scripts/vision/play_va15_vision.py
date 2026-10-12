@@ -36,6 +36,7 @@ def main():
     parser.add_argument("--loaded-gun", action="store_true", help="Enable physical gun and effective hanging-hose load")
     parser.add_argument("--bounded-hose", action="store_true", help="Use VB2 bounded-tether vision task")
     parser.add_argument("--payout", action="store_true", help="Use VB5 gun/hose weight with free overhead payout")
+    parser.add_argument("--vb8", action="store_true", help="Use VB8 gravity-aligned gun targets (requires a VB8-trained policy)")
     parser.add_argument("--max-steps", type=int, default=None)
     parser.add_argument("--motion-trace-csv", type=Path, default=None)
     parser.add_argument("--episode-length-s", type=float, default=None)
@@ -47,8 +48,8 @@ def main():
         parser.error("--max-steps must be positive")
     if args.episode_length_s is not None and (not math.isfinite(args.episode_length_s) or args.episode_length_s <= 0):
         parser.error("--episode-length-s must be finite and positive")
-    if sum((args.loaded_gun, args.bounded_hose, args.payout)) > 1:
-        parser.error("Choose only one load model: --loaded-gun, --bounded-hose or --payout")
+    if sum((args.loaded_gun, args.bounded_hose, args.payout, args.vb8)) > 1:
+        parser.error("Choose only one task: --loaded-gun, --bounded-hose, --payout or --vb8")
     exchange = Path(tempfile.mkdtemp(prefix="b2_z1_va15_vision_"))
     env = os.environ.copy()
     env.update(B2_Z1_VISION_EXCHANGE=str(exchange), PYTHONUNBUFFERED="1", HYDRA_FULL_ERROR="1")
@@ -60,7 +61,8 @@ def main():
                   "--save-overlay", "--depth-shadow-filter"]
     if not args.headless:
         vision_cmd.append("--display")
-    task_name = ("Unitree-b2z1-AMP-VB5-Payout-Vision-Play" if args.payout
+    task_name = ("Unitree-b2z1-AMP-VB8-Quiet-Load-Vision-Play" if args.vb8
+                 else "Unitree-b2z1-AMP-VB5-Payout-Vision-Play" if args.payout
                  else "Unitree-b2z1-AMP-VB2-Bounded-Hose-Vision-Play" if args.bounded_hose
                  else "Unitree-b2z1-AMP-VA15-Loaded-Gun-Vision-Play" if args.loaded_gun
                  else "Unitree-b2z1-AMP-VA15-Vision-Play")

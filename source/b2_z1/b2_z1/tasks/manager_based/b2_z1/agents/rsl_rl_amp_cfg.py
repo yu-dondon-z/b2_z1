@@ -947,3 +947,15 @@ class AMPVB7LoadRobustRunnerCfg(AMPVB4PayoutRunnerCfg):
         super().__post_init__()
         self.max_iterations = 8000
         self.algorithm.learning_rate = 3.0e-5
+
+
+@configclass
+class AMPVB8QuietLoadRunnerCfg(AMPVB7LoadRobustRunnerCfg):
+    """Screen a short continuation before another long robustness run."""
+    run_name = "VB8_quiet_load_from10000"
+    save_interval = 50
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.max_iterations = 500
+        self.algorithm.learning_rate = 1.0e-5
