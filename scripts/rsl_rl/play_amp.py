@@ -266,6 +266,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         if arm_action_indices is not None or args_cli.motion_trace_csv else None
     )
     motion_trace = []
+    trace_gun_contact = bool(getattr(env.unwrapped.cfg, 'vb10_contact_diagnostics', False))
     trace_termination_names = list(env.unwrapped.termination_manager.active_terms) if args_cli.motion_trace_csv else []
     if args_cli.motion_trace_csv and hasattr(env.unwrapped, "hose_force_w"):
         env.unwrapped._record_terminal_motion = True
@@ -358,12 +359,15 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                                env.unwrapped.termination_manager.get_term(name)[0].item())
                            for name in trace_termination_names],
                          loaded_env._trace_terminal_height[0].item() if hasattr(loaded_env, "_trace_terminal_height") and dones[0] else None,
-                         loaded_env._trace_terminal_tilt_deg[0].item() if hasattr(loaded_env, "_trace_terminal_tilt_deg") and dones[0] else None]
+                         loaded_env._trace_terminal_tilt_deg[0].item() if hasattr(loaded_env, "_trace_terminal_tilt_deg") and dones[0] else None,
+                         *([torch.linalg.vector_norm(loaded_env.gun_contact_force_w[0]).item(),
+                            loaded_env.gun_contact_force_w[0,2].item(),
+                            loaded_env.gun_bottom_clearance_m[0].item()] if trace_gun_contact else [])]
                     )
-            if arm_action_state is not None:
-                reset_mask = dones.to(dtype=torch.bool).reshape(-1)
-                if torch.any(reset_mask):
-                    reset_count += int(reset_mask.sum().item())
+            reset_mask = dones.to(dtype=torch.bool).reshape(-1)
+            if torch.any(reset_mask):
+                reset_count += int(reset_mask.sum().item())
+                if arm_action_state is not None:
                     arm_action_state[reset_mask] = 0.0
         timestep += 1
         if args_cli.video and timestep >= args_cli.video_length:
@@ -421,7 +425,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                  "path_lateral_error_b", "path_heading_error_b",
                  "hose_mass_kg", "hose_force_n", "hose_torque_nm", "hose_tension_n", "hose_tension_raw_n",
                  "reset", "body_tilt_deg", *[f"termination_{name}" for name in trace_termination_names],
-                 "terminal_base_height_m", "terminal_tilt_deg"]
+                 "terminal_base_height_m", "terminal_tilt_deg",
+                 *(['gun_contact_force_n','gun_vertical_contact_force_n','gun_bottom_clearance_m'] if trace_gun_contact else [])]
             )
             writer.writerows(motion_trace)
         print(f"[INFO] Wrote motion trace: {args_cli.motion_trace_csv}")

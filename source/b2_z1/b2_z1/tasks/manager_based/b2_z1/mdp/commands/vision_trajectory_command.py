@@ -81,6 +81,12 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
             self.num_envs, 3, device=self.device
         )
         self._file_hold_position_b = torch.zeros(self.num_envs, 3, device=self.device)
+        self._file_motion_ready = False
+        self._file_settle_elapsed = 0.0
+        self._file_arm_joint_ids = None
+        if cfg.file_standby_before_motion:
+            self._file_arm_joint_ids = self.robot.find_joints(
+                [f"joint{i}" for i in range(1, 7)], preserve_order=True)[0]
         self._command_transition_start_velocity_b = torch.zeros(
             self.num_envs, 3, device=self.device
         )
@@ -111,6 +117,16 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
             raise ValueError("synthetic_arc_radius_range_m must be ordered")
         if cfg.mode == "file" and self.num_envs != 1:
             raise ValueError("RearVisionTrajectoryCommand file mode requires scene.num_envs == 1")
+        if not math.isfinite(cfg.base_motion_delay_s) or cfg.base_motion_delay_s < 0:
+            raise ValueError('Base motion delay must be finite and nonnegative')
+        for bounds in (cfg.synthetic_initial_lateral_offset_range_m,
+                       cfg.synthetic_initial_heading_offset_range_rad):
+            if len(bounds) != 2 or not all(math.isfinite(v) for v in bounds) or bounds[0] > bounds[1]:
+                raise ValueError('Invalid initial path recovery range')
+        if cfg.file_standby_before_motion and not all(math.isfinite(v) and v > 0 for v in (
+                cfg.file_standby_position_tolerance_m, cfg.file_standby_height_tolerance_m,
+                cfg.file_standby_settle_s)):
+            raise ValueError('File standby tolerances must be positive')
 
     def __str__(self) -> str:
         return (
@@ -148,6 +164,18 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
                 self._synthetic_path_origin_xy_w[env_ids] = base_pos_w[:, :2]
                 self._synthetic_path_heading0_w[env_ids] = base_heading_w
                 self.straight_heading_target[env_ids] = base_heading_w
+                # VB10: learn recovery from small initial centreline/heading
+                # errors. Zero defaults consume no RNG and preserve old runs.
+                offsets = self.cfg.synthetic_initial_lateral_offset_range_m
+                headings = self.cfg.synthetic_initial_heading_offset_range_rad
+                if offsets[0] != 0. or offsets[1] != 0.:
+                    shift = offsets[0] + torch.rand(count,device=self.device)*(offsets[1]-offsets[0])
+                    self._synthetic_path_origin_xy_w[env_ids,0] -= torch.sin(base_heading_w)*shift
+                    self._synthetic_path_origin_xy_w[env_ids,1] += torch.cos(base_heading_w)*shift
+                if headings[0] != 0. or headings[1] != 0.:
+                    yaw_shift = headings[0] + torch.rand(count,device=self.device)*(headings[1]-headings[0])
+                    self._synthetic_path_heading0_w[env_ids] += yaw_shift
+                    self.straight_heading_target[env_ids] += yaw_shift
 
                 straight = (
                     torch.rand(count, device=self.device)
@@ -201,6 +229,9 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
             self._filtered_velocity_command_b[env_ids]
         )
         self._command_transition_elapsed[env_ids] = 0.0
+        if self.cfg.mode == 'file':
+            self._file_motion_ready = False
+            self._file_settle_elapsed = 0.0
         self._filtered_path_heading[env_ids] = 0.0
         self._path_lateral_error_b[env_ids] = 0.0
         self._path_heading_error_b[env_ids] = 0.0
@@ -368,7 +399,7 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         )
         blended_velocity_b = self._command_transition_start_velocity_b + (
             desired_velocity_b - self._command_transition_start_velocity_b
-        ) * transition_blend.unsqueeze(1)
+        ) * self._velocity_start_blend().unsqueeze(1)
         velocity_tau = max(self.cfg.velocity_filter_time_constant_s, dt)
         velocity_alpha = 1.0 - math.exp(-dt / velocity_tau)
         self._filtered_velocity_command_b += velocity_alpha * (
@@ -486,7 +517,7 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         blend = blend * blend * (3.0 - 2.0 * blend)
         blended_velocity = self._command_transition_start_velocity_b + (
             desired_velocity_b - self._command_transition_start_velocity_b
-        ) * blend.unsqueeze(1)
+        ) * self._velocity_start_blend().unsqueeze(1)
         tau = max(self.cfg.velocity_filter_time_constant_s, dt)
         velocity_alpha = 1.0 - math.exp(-dt / tau)
         self._filtered_velocity_command_b += velocity_alpha * (
@@ -803,16 +834,15 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         desired_velocity_b[0, 2] = (
             self.cfg.path_heading_gain * heading_error
         ).clamp(-self.cfg.max_yaw_rate_rps, self.cfg.max_yaw_rate_rps)
+        if not self._gate_file_startup():
+            self._filter_file_velocity_command(torch.zeros_like(desired_velocity_b))
+            return
         # File playback must use the same slow stand-to-walk handoff as
         # synthetic training. A low-pass filter alone reaches most of the
         # command in under one second and caused the observed immediate squat.
         dt = float(self.env.step_dt)
         self._command_transition_elapsed += dt
-        duration = max(self.cfg.command_transition_time_s, dt)
-        start_blend = torch.clamp(
-            self._command_transition_elapsed / duration, 0.0, 1.0
-        )
-        start_blend = start_blend * start_blend * (3.0 - 2.0 * start_blend)
+        start_blend = self._velocity_start_blend()
         desired_velocity_b *= start_blend.unsqueeze(1)
         self._filter_file_velocity_command(desired_velocity_b)
 
@@ -882,11 +912,60 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
             self._filtered_velocity_command_b.zero_()
             self._filtered_path_heading.zero_()
             self._command_transition_elapsed.zero_()
+            self._file_motion_ready = False
+            self._file_settle_elapsed = 0.0
             self._hold_file_tool_pose()
 
     def _hold_file_tool_pose(self):
         """Hold the captured/last commanded body-relative target inside the workspace."""
+        if self.cfg.file_standby_before_motion and not self._file_motion_ready:
+            position_b = torch.zeros_like(self._file_hold_position_b)
+            position_b[:,0] = sum(self.cfg.rear_work_x_range_m)*.5
+            base = self.robot.data.body_pos_w[:,self.base_idx]
+            quat = self.robot.data.body_state_w[:,self.base_idx,3:7]
+            desired_w = base + quat_apply(quat,position_b)
+            road_z = self.cfg.file_road_surface_z_w_m
+            if road_z is None:
+                road_z = self.cfg.synthetic_ground_height_w_m
+            desired_w[:,2] = self.env.scene.env_origins[:,2] + road_z + self.cfg.tool_height_m
+            position_b = quat_apply_inverse(quat,desired_w-base)
+            self._set_file_pose_command_b_smooth(position_b)
+            return
         self._set_pose_command_b(self._file_hold_position_b)
+
+    def _velocity_start_blend(self):
+        """Delay only locomotion; retain the original continuous TCP preparation."""
+        duration = max(self.cfg.command_transition_time_s,float(self.env.step_dt))
+        x = ((self._command_transition_elapsed-self.cfg.base_motion_delay_s)/duration).clamp(0.,1.)
+        return x*x*(3.-2.*x)
+
+    def _gate_file_startup(self):
+        """One-shot measured standby gate, not a recurrent stop/go controller.
+
+        Front camera points cannot yet reach the rear TCP: first settle on a
+        safe rear target, then move and let the real cached path pass under B2.
+        Never invent camera history. Once moving, ordinary path errors do not
+        repeatedly close this gate; only reset/full stale stop re-arms it.
+        """
+        if not self.cfg.file_standby_before_motion or self._file_motion_ready:
+            return True
+        self._hold_file_tool_pose()
+        base = self.robot.data.body_pos_w[:,self.base_idx]
+        actual = self.robot.data.body_pos_w[:,self.body_idx]
+        error = self.tracking_pose_w[:,:3]-actual
+        arm_speed = self.robot.data.joint_vel[:,self._file_arm_joint_ids].abs().max()
+        upright = -self.robot.data.projected_gravity_b[:,2]
+        gun_force = self.env.gun_contact_force_w if hasattr(self.env,'gun_contact_force_w') else None
+        unloaded = gun_force is None or bool(torch.linalg.vector_norm(gun_force,dim=-1).max()<5.)
+        ready = (torch.linalg.vector_norm(error,dim=-1).max()<self.cfg.file_standby_position_tolerance_m
+                 and error[:,2].abs().max()<self.cfg.file_standby_height_tolerance_m
+                 and arm_speed<.8 and upright.min()>math.cos(.10)
+                 and (base[:,2]-self.env.scene.env_origins[:,2]).min()>.45 and unloaded)
+        self._file_settle_elapsed = self._file_settle_elapsed+float(self.env.step_dt) if ready else 0.
+        if self._file_settle_elapsed >= self.cfg.file_standby_settle_s:
+            self._file_motion_ready = True
+            self._command_transition_elapsed.zero_()
+        return self._file_motion_ready
 
     def _set_file_pose_command_b_smooth(self, desired_position_b: torch.Tensor):
         """Move the visual TCP target continuously when it becomes available."""
@@ -969,6 +1048,9 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
             "tool_target_minus_actual_b": tool_error_b.detach().cpu().tolist(),
             "tool_position_error_m": float(torch.linalg.norm(tool_error_b).item()),
         }
+        if self.cfg.file_standby_before_motion:
+            payload.update(file_motion_ready=self._file_motion_ready,
+                           file_standby_settle_s=self._file_settle_elapsed)
         target = exchange_dir / "latest_controller_status.json"
         temporary = exchange_dir / f".latest_controller_status.{os.getpid()}.tmp.json"
         temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -1238,6 +1320,13 @@ class RearVisionTrajectoryCommandCfg(UniformPoseWBCCommandCfg):
     synthetic_arc_direction: Literal["both", "left", "right"] = "both"
     synthetic_ground_height_w_m: float = 0.0
     command_transition_time_s: float = 3.0
+    base_motion_delay_s: float = 0.0
+    synthetic_initial_lateral_offset_range_m: tuple[float,float] = (0.,0.)
+    synthetic_initial_heading_offset_range_rad: tuple[float,float] = (0.,0.)
+    file_standby_before_motion: bool = False
+    file_standby_position_tolerance_m: float = .08
+    file_standby_height_tolerance_m: float = .015
+    file_standby_settle_s: float = .30
     velocity_filter_time_constant_s: float = 0.35
     # Retained for checkpoint/config compatibility. New synthetic training
     # derives target height from the current world-frame base pose.

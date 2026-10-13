@@ -57,6 +57,15 @@ def analyze(path, start_s=12., end_s=55.):
                  'fk_tcp_error_p95_m':float(torch.quantile(fk_error,.95)),
                  'joint_limit_margins':limits,
                  'limitations':'Single continuous steady window; gun pose reconstructed from measured joints, with FK/TCP consistency check. Not load certification.'})
+    if 'gun_contact_force_n' in rows[0]:
+        force=val(['gun_contact_force_n','gun_vertical_contact_force_n','gun_bottom_clearance_m'])
+        if not torch.isfinite(force).all():
+            raise ValueError('Nonfinite gun contact/clearance telemetry')
+        base.update({'gun_contact_gt1N_fraction':float((force[:,0]>1.).double().mean()),
+                     'gun_contact_gt10N_fraction':float((force[:,0]>10.).double().mean()),
+                     'gun_vertical_support_mean_n':float(force[:,1].clamp_min(0).mean()),
+                     'gun_contact_force_p95_n':float(torch.quantile(force[:,0],.95)),
+                     'gun_bottom_clearance_p05_m':float(torch.quantile(force[:,2],.05))})
     return base
 
 

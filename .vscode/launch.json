@@ -2,6 +2,25 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "VB10：悬空TCP＋视觉接管修复（续训1500轮）",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/rsl_rl/train_amp.py",
+            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--task", "Unitree-b2z1-AMP-VB10-Clearance",
+                "--num_envs", "256", "--headless", "--max_iterations", "1500",
+                "--resume", "--reset_optimizer",
+                "--load_run", "2026-10-13_09-13-05_VB9_pose_guide_fromVB7_10000",
+                "--checkpoint", "model_10999.pt", "--run_name", "VB10_clearance_fromVB9_10999",
+                "agent.amp_cfg.amp_num_preload_transitions=20000"
+            ],
+            "env": {"PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True", "HYDRA_FULL_ERROR": "1", "PYTHONUNBUFFERED": "1"}
+        },
+        {
             "name": "VB9：退出限位＋整枪稳定（阶段A，续训1000轮）",
             "type": "debugpy",
             "request": "launch",

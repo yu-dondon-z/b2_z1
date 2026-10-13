@@ -970,3 +970,13 @@ class AMPVB9PoseGuideRunnerCfg(AMPVB8QuietLoadRunnerCfg):
         super().__post_init__()
         self.max_iterations = 1000
         self.algorithm.learning_rate = 2.0e-5
+
+
+@configclass
+class AMPVB10ClearanceRunnerCfg(AMPVB9PoseGuideRunnerCfg):
+    run_name = 'VB10_clearance_fromVB9_10999'
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.max_iterations = 1500
+        self.algorithm.learning_rate = 1.0e-5
