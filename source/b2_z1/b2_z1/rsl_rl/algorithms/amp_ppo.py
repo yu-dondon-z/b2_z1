@@ -244,6 +244,7 @@ class AMP_PPO:
         mean_entropy = 0
         mean_arm_teacher_loss = 0.0
         mean_leg_teacher_loss = 0.0
+        mean_pose_guidance_fraction = 0.0
         
         # amp
         mean_amp_loss = 0
@@ -445,10 +446,21 @@ class AMP_PPO:
                 with torch.no_grad():
                     teacher_actions = self.arm_teacher_actor(obs_batch[:original_batch_size])
                 if self.arm_teacher_weight > 0.0:
-                    arm_teacher_loss = torch.square(
-                        mu_batch[:, self.arm_teacher_action_ids]
-                        - teacher_actions[:, self.arm_teacher_action_ids]
-                    ).mean()
+                    arm_delta = (mu_batch[:, self.arm_teacher_action_ids]
+                                 - teacher_actions[:, self.arm_teacher_action_ids])
+                    arm_errors = (self.arm_teacher_actor.action_error_cost(arm_delta)
+                                  if hasattr(self.arm_teacher_actor, "action_error_cost")
+                                  else arm_delta.square().mean(dim=1))
+                    if hasattr(self.arm_teacher_actor, "guidance_mask"):
+                        guide_mask = self.arm_teacher_actor.guidance_mask(obs_batch[:original_batch_size])
+                        if guide_mask.shape != arm_errors.shape or not torch.isfinite(guide_mask).all():
+                            raise RuntimeError("Invalid pose-guide mask")
+                        # Mean over the batch, not only accepted samples: a
+                        # low valid fraction must not amplify a few targets.
+                        arm_teacher_loss = (arm_errors * guide_mask).mean()
+                        mean_pose_guidance_fraction += (guide_mask > 0).float().mean().item()
+                    else:
+                        arm_teacher_loss = arm_errors.mean()
                     loss = loss + self.arm_teacher_weight * arm_teacher_loss
                     mean_arm_teacher_loss += arm_teacher_loss.detach().item()
                 if self.leg_teacher_weight > 0.0:
@@ -596,6 +608,8 @@ class AMP_PPO:
         if self.arm_teacher_actor is not None:
             if self.arm_teacher_weight > 0.0:
                 loss_dict["arm_teacher"] = mean_arm_teacher_loss
+                if hasattr(self.arm_teacher_actor, "guidance_mask"):
+                    loss_dict["pose_guidance_fraction"] = mean_pose_guidance_fraction / num_updates
             if self.leg_teacher_weight > 0.0:
                 loss_dict["leg_teacher"] = mean_leg_teacher_loss
         if self.rnd:

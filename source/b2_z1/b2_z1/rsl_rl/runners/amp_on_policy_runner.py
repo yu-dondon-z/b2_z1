@@ -256,6 +256,8 @@ class AMP_OnPolicyRunner:
         start_iter = self.current_learning_iteration
         tot_iter = start_iter + num_learning_iterations
         for it in range(start_iter, tot_iter):
+            if hasattr(self.alg, "arm_teacher_actor") and hasattr(self.alg.arm_teacher_actor, "set_iteration"):
+                self.alg.arm_teacher_actor.set_iteration(it - start_iter)
             start = time.time()
             # Rollout
             with torch.inference_mode():

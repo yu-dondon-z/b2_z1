@@ -959,3 +959,14 @@ class AMPVB8QuietLoadRunnerCfg(AMPVB7LoadRobustRunnerCfg):
         super().__post_init__()
         self.max_iterations = 500
         self.algorithm.learning_rate = 1.0e-5
+
+
+@configclass
+class AMPVB9PoseGuideRunnerCfg(AMPVB8QuietLoadRunnerCfg):
+    run_name = "VB9_pose_guide_fromVB7_10000"
+    save_interval = 100
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.max_iterations = 1000
+        self.algorithm.learning_rate = 2.0e-5

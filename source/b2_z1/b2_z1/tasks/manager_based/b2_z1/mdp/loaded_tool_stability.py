@@ -39,6 +39,31 @@ def gun_vertical_axis_cost(env, asset_cfg):
     return (1.0 - axis_z_w.square()).clamp(0.0, 1.0)
 
 
+def gun_connector_normal_velocity_cost(env, asset_cfg, command_name="ee_target",
+                                       vertical_scale=.12, lateral_scale=.20,
+                                       connector_point=(0., -.03, .48)):
+    """Measure the moving upper hose connector, not just the ground TCP.
+
+    v(point)=v(COM)+omega cross (point-COM). Progress along the path is free.
+    Body/gun rotation can shake the connector even when the TCP is stable.
+    """
+    asset = env.scene[asset_cfg.name]
+    i = asset_cfg.body_ids[0]
+    q = asset.data.body_link_quat_w[:, i]
+    point_b = torch.tensor(connector_point, device=q.device, dtype=q.dtype).expand(len(q), 3)
+    # Quaternion rotation, matching the physical hose force application point.
+    t = 2*torch.cross(q[:,1:], point_b, dim=1)
+    offset_link_w = point_b + q[:,:1]*t + torch.cross(q[:,1:], t, dim=1)
+    point_w = asset.data.body_link_pos_w[:, i] + offset_link_w
+    offset_com_w = point_w - asset.data.body_com_pos_w[:, i]
+    velocity = asset.data.body_com_lin_vel_w[:, i] + torch.cross(
+        asset.data.body_com_ang_vel_w[:, i], offset_com_w, dim=1)
+    term = env.command_manager.get_term(command_name)
+    heading = asset.data.heading_w + term._path_heading_error_b
+    lateral = -torch.sin(heading)*velocity[:,0] + torch.cos(heading)*velocity[:,1]
+    return _huber_cost(velocity[:,2],vertical_scale)+_huber_cost(lateral,lateral_scale)
+
+
 def arm_limit_buffer_cost(env, asset_cfg, margin_rad=0.10,
                           action_name="JointPositionAction"):
     """Leave arm compensation room, penalizing measured and requested poses.

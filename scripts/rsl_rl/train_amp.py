@@ -376,6 +376,39 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             f"yaw release={args_cli.leg_teacher_yaw_release:.3f}, Z1 rows={arm_indices}"
         )
 
+    if getattr(env_cfg, "vb9_pose_guide_enabled", False):
+        if (not agent_cfg.resume or runner.empirical_normalization or args_cli.freeze_arm_actor
+                or args_cli.arm_teacher_weight or args_cli.leg_teacher_weight or args_cli.teacher_checkpoint
+                or runner.alg.policy.is_recurrent):
+            raise ValueError("VB9 guide needs resumed, unnormalized feed-forward PPO and no other teacher/freezing")
+        import copy
+        from b2_z1.rsl_rl.modules.pose_reference_teacher import PoseReferenceTeacher
+        action_term = env.unwrapped.action_manager.get_term("JointPositionAction")
+        joint_names = action_term._joint_names
+        arm_indices = [joint_names.index(f"joint{i}") for i in range(1, 7)]
+        observation, _ = env.get_observations()
+        if observation.shape[1] != 70 or len(joint_names) != 18:
+            raise RuntimeError("VB9 requires the existing 70-observation/18-action contract")
+        if hasattr(action_term, "_alpha") and action_term._alpha != .20:
+            raise RuntimeError("VB9 must retain the inherited 0.20 EMA actuator contract")
+        if not isinstance(action_term._scale, (int, float)) or action_term._scale != .25:
+            raise RuntimeError("VB9 pose reference expects scalar 0.25 joint action scale")
+        defaults = env.unwrapped.scene["robot"].data.default_joint_pos[0, arm_indices].tolist()
+        teacher = PoseReferenceTeacher(
+            copy.deepcopy(runner.alg.policy.actor), env_cfg.scene.robot.spawn.asset_path,
+            arm_indices, defaults, warmup_iterations=env_cfg.vb9_guide_warmup_iterations,
+        ).to(runner.device).eval().requires_grad_(False)
+        runner.alg.arm_teacher_actor = teacher
+        runner.alg.arm_teacher_action_ids = arm_indices
+        runner.alg.arm_teacher_weight = env_cfg.vb9_arm_guide_weight
+        runner.alg.leg_teacher_action_ids = [i for i in range(18) if i not in arm_indices]
+        runner.alg.leg_teacher_weight = .05
+        runner.alg.leg_teacher_yaw_release = .10
+        print(f"[VB9] Training-only masked posture reference: arm rows={arm_indices}, "
+              f"weight={env_cfg.vb9_arm_guide_weight}, warmup={env_cfg.vb9_guide_warmup_iterations}; "
+              "steady-posture auxiliary targets only; inherited actuator EMA remains unchanged; "
+              "rollout/export still use only the student actor")
+
     # dump the configuration into log-directory
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
     dump_yaml(os.path.join(log_dir, "params", "agent.yaml"), agent_cfg)
