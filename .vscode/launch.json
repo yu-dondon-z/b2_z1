@@ -2,6 +2,38 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "VB11：完整视觉验收（选择训练后权重）",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/vision/play_va15_vision.py",
+            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "subProcess": false,
+            "justMyCode": false,
+            "args": ["--vb11", "--checkpoint", "${input:vb11CheckpointPath}", "--episode-length-s", "600", "--max-steps", "15000"],
+            "env": {"B2_Z1_HOSE_MASS_KG": "3", "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True", "HYDRA_FULL_ERROR": "1", "PYTHONUNBUFFERED": "1"}
+        },
+        {
+            "name": "VB11：悬空待机＋真实负载（续训2000轮）",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/rsl_rl/train_amp.py",
+            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--task", "Unitree-b2z1-AMP-VB11-Ready",
+                "--num_envs", "256", "--headless", "--max_iterations", "2000",
+                "--resume", "--reset_optimizer",
+                "--load_run", "2026-10-13_10-35-50_VB10_clearance_fromVB9_10999",
+                "--checkpoint", "model_12300.pt", "--run_name", "VB11_ready_fromVB10_12300",
+                "agent.amp_cfg.amp_num_preload_transitions=20000"
+            ],
+            "env": {"PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True", "HYDRA_FULL_ERROR": "1", "PYTHONUNBUFFERED": "1"}
+        },
+        {
             "name": "VB10：悬空TCP＋视觉接管修复（续训1500轮）",
             "type": "debugpy",
             "request": "launch",
@@ -720,6 +752,12 @@
         }
     ],
     "inputs": [
+        {
+            "id": "vb11CheckpointPath",
+            "type": "promptString",
+            "description": "输入正式训练后VB11的model_*.pt绝对路径；不要选择短测或旧版本权重",
+            "default": ""
+        },
         {
             "id": "ampCheckpointPath",
             "type": "promptString",

@@ -6,6 +6,21 @@
 import gymnasium as gym
 
 for task_suffix, env_class in (
+    ("Ready", "B2Z1VB11ReadyAMPEnvCfg"),
+    ("Ready-Play", "B2Z1VB11ReadyAMPEnvCfg_Play"),
+    ("Ready-Vision-Play", "B2Z1VB11ReadyVisionAMPEnvCfg_Play"),
+):
+    gym.register(
+        id=f"Unitree-b2z1-AMP-VB11-{task_suffix}",
+        entry_point="b2_z1.envs.b2z1_ready_tool_env:B2Z1ReadyToolAMPEnv",
+        disable_env_checker=True,
+        kwargs={
+            "env_cfg_entry_point": f"{__name__}.b2_z1_vb11_env_cfg:{env_class}",
+            "rsl_rl_cfg_entry_point": f"{__name__}.agents.rsl_rl_amp_cfg:AMPVB11ReadyRunnerCfg",
+        },
+    )
+
+for task_suffix, env_class in (
     ("Clearance", "B2Z1VB10ClearanceAMPEnvCfg"),
     ("Clearance-Play", "B2Z1VB10ClearanceAMPEnvCfg_Play"),
     ("Clearance-Vision-Play", "B2Z1VB10ClearanceVisionAMPEnvCfg_Play"),
