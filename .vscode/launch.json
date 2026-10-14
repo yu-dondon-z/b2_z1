@@ -2,6 +2,36 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "VB13：带载准备第0级（500轮＋自动验收）",
+            "type": "debugpy", "request": "launch",
+            "program": "${workspaceFolder}/scripts/rsl_rl/train_vb13_curriculum.py",
+            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
+            "cwd": "${workspaceFolder}", "console": "integratedTerminal",
+            "subProcess": false, "justMyCode": false,
+            "args": ["--stage", "0", "--iterations", "500", "--num-envs", "256"],
+            "env": {"PYTHONUNBUFFERED": "1", "HYDRA_FULL_ERROR": "1"}
+        },
+        {
+            "name": "VB13：带载准备检查（选择级别和权重）",
+            "type": "debugpy", "request": "launch",
+            "program": "${workspaceFolder}/scripts/rsl_rl/play_amp.py",
+            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
+            "cwd": "${workspaceFolder}", "console": "integratedTerminal",
+            "subProcess": false, "justMyCode": false,
+            "args": ["--task", "Unitree-b2z1-AMP-VB13-Prepare-Play", "--num_envs", "1", "--checkpoint", "${input:vb13CheckpointPath}", "--max-steps", "3000"],
+            "env": {"B2_Z1_VB13_STAGE": "${input:vb13Stage}", "HYDRA_FULL_ERROR": "1", "PYTHONUNBUFFERED": "1"}
+        },
+        {
+            "name": "VB13：最终完整视觉验收（仅第4级权重）",
+            "type": "debugpy", "request": "launch",
+            "program": "${workspaceFolder}/scripts/vision/play_va15_vision.py",
+            "python": "/home/dong/anaconda3/envs/env_isaaclab/bin/python",
+            "cwd": "${workspaceFolder}", "console": "integratedTerminal",
+            "subProcess": false, "justMyCode": false,
+            "args": ["--vb13", "--checkpoint", "${input:vb13CheckpointPath}", "--episode-length-s", "600", "--max-steps", "15000"],
+            "env": {"HYDRA_FULL_ERROR": "1", "PYTHONUNBUFFERED": "1", "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"}
+        },
+        {
             "name": "VB12：阶段推进修复＋退化监控（续训500轮）",
             "type": "debugpy", "request": "launch",
             "program": "${workspaceFolder}/scripts/rsl_rl/train_vb12_guarded.py",
@@ -772,6 +802,8 @@
         }
     ],
     "inputs": [
+        {"id": "vb13CheckpointPath", "type": "promptString", "description": "输入与所选VB13级别匹配的model_*.pt绝对路径", "default": ""},
+        {"id": "vb13Stage", "type": "pickString", "description": "选择该权重训练时的级别；第0～3级只保持不行走", "options": ["0", "1", "2", "3", "4"], "default": "0"},
         {
             "id": "vb12CheckpointPath", "type": "promptString",
             "description": "输入正式训练后VB12的model_*.pt绝对路径；不要选择短测或旧版本权重", "default": ""

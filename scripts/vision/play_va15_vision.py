@@ -41,6 +41,7 @@ def main():
     parser.add_argument("--vb10", action="store_true", help="VB10 flat-ended gun collision and measured standby before motion")
     parser.add_argument("--vb11", action="store_true", help="VB11 final-height standby and nominal full-load validation")
     parser.add_argument("--vb12", action="store_true", help="VB12 strict startup and world-height rear-cache waiting")
+    parser.add_argument("--vb13", action="store_true", help="VB13 final 1cm/3kg measured-gate visual validation (stage 4)")
     parser.add_argument("--max-steps", type=int, default=None)
     parser.add_argument("--motion-trace-csv", type=Path, default=None)
     parser.add_argument("--episode-length-s", type=float, default=None)
@@ -52,20 +53,23 @@ def main():
         parser.error("--max-steps must be positive")
     if args.episode_length_s is not None and (not math.isfinite(args.episode_length_s) or args.episode_length_s <= 0):
         parser.error("--episode-length-s must be finite and positive")
-    if sum((args.loaded_gun, args.bounded_hose, args.payout, args.vb8, args.vb9, args.vb10, args.vb11, args.vb12)) > 1:
-        parser.error("Choose only one task: --loaded-gun, --bounded-hose, --payout, --vb8, --vb9, --vb10, --vb11 or --vb12")
+    if sum((args.loaded_gun, args.bounded_hose, args.payout, args.vb8, args.vb9, args.vb10, args.vb11, args.vb12, args.vb13)) > 1:
+        parser.error("Choose only one version/task flag")
     exchange = Path(tempfile.mkdtemp(prefix="b2_z1_va15_vision_"))
     env = os.environ.copy()
     env.update(B2_Z1_VISION_EXCHANGE=str(exchange), PYTHONUNBUFFERED="1", HYDRA_FULL_ERROR="1")
     # Do not inherit an old session's independently overridden trajectory file.
     env.pop("B2_Z1_VISION_TRAJECTORY", None)
     env["B2_Z1_VISION_ALL_CAMERAS"] = "0"
+    if args.vb13:
+        env["B2_Z1_VB13_STAGE"] = "4"
     vision_cmd = [args.vision_python, str(repo / "scripts/vision/run_rhacracknet_bridge.py"),
                   "--exchange-dir", str(exchange), "--device", args.vision_device,
                   "--save-overlay", "--depth-shadow-filter"]
     if not args.headless:
         vision_cmd.append("--display")
-    task_name = ("Unitree-b2z1-AMP-VB12-Schedule-Vision-Play" if args.vb12
+    task_name = ("Unitree-b2z1-AMP-VB13-Prepare-Vision-Play" if args.vb13
+                 else "Unitree-b2z1-AMP-VB12-Schedule-Vision-Play" if args.vb12
                  else "Unitree-b2z1-AMP-VB11-Ready-Vision-Play" if args.vb11
                  else "Unitree-b2z1-AMP-VB10-Clearance-Vision-Play" if args.vb10
                  else "Unitree-b2z1-AMP-VB9-Pose-Guide-Vision-Play" if args.vb9

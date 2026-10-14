@@ -999,3 +999,8 @@ class AMPVB12ScheduleRunnerCfg(AMPVB11ReadyRunnerCfg):
     def __post_init__(self):
         super().__post_init__()
         self.max_iterations = 500
+
+
+@configclass
+class AMPVB13PrepareRunnerCfg(AMPVB12ScheduleRunnerCfg):
+    run_name = "VB13_stage0_clear_hold"

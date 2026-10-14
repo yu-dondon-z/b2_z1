@@ -394,17 +394,68 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         if not isinstance(action_term._scale, (int, float)) or action_term._scale != .25:
             raise RuntimeError("VB9 pose reference expects scalar 0.25 joint action scale")
         defaults = env.unwrapped.scene["robot"].data.default_joint_pos[0, arm_indices].tolist()
-        teacher = PoseReferenceTeacher(
+        reference_class, reference_kwargs = PoseReferenceTeacher, {}
+        if getattr(env_cfg, "vb13_gravity_reference", False):
+            from b2_z1.rsl_rl.modules.gravity_pose_reference_teacher import GravityPoseReferenceTeacher
+            robot = env.unwrapped.scene["robot"]
+            arm_joint_ids = [robot.joint_names.index(f"joint{i}") for i in range(1, 7)]
+            reference_class = GravityPoseReferenceTeacher
+            reference_kwargs = {
+                "arm_stiffness": robot.data.joint_stiffness[:, arm_joint_ids].mean(0).tolist(),
+                "hose_mass_kg": env_cfg.vb11_nominal_hose_mass_kg,
+            }
+        teacher = reference_class(
             copy.deepcopy(runner.alg.policy.actor), env_cfg.scene.robot.spawn.asset_path,
             arm_indices, defaults, warmup_iterations=env_cfg.vb9_guide_warmup_iterations,
+            **reference_kwargs,
         ).to(runner.device).eval().requires_grad_(False)
+        if getattr(env_cfg, "vb13_gravity_reference", False):
+            # Use actual runtime effort limits, not the base asset defaults.
+            # Representative static margin is necessary, not sufficient for
+            # dynamic load qualification or real-robot torque certification.
+            target = torch.tensor([[-.775, 0., env_cfg.commands.ee_target.tool_height_m-.52]], device=runner.device)
+            up = torch.tensor([[0., 0., 1.]], device=runner.device)
+            q, residual, _ = teacher.solve(target, up)
+            static_tau, _ = teacher.gravity_torque(q, up)
+            effort = robot.data.joint_effort_limits[:, arm_joint_ids].amin(0)
+            ratio = (static_tau.abs()/effort.clamp_min(1.e-6)).max().item()
+            if not math.isfinite(ratio) or ratio > .80 or residual.item() > .015:
+                raise ValueError(f"VB13 representative pose has insufficient static margin: ratio={ratio}, residual={residual.item()}")
+            print(f"[VB13] actual arm kp mean={reference_kwargs['arm_stiffness']}, "
+                  f"effort limits={effort.tolist()}, representative static ratio={ratio:.3f}")
         runner.alg.arm_teacher_actor = teacher
         runner.alg.arm_teacher_action_ids = arm_indices
         runner.alg.arm_teacher_weight = env_cfg.vb9_arm_guide_weight
         runner.alg.leg_teacher_action_ids = [i for i in range(18) if i not in arm_indices]
         runner.alg.leg_teacher_weight = .05
         runner.alg.leg_teacher_yaw_release = .10
-        if hasattr(env_cfg, "vb12_arm_noise_cap"):
+        if getattr(env_cfg, "vb13_gravity_reference", False):
+            policy = runner.alg.policy
+            legs = runner.alg.leg_teacher_action_ids
+            if policy.noise_std_type != "scalar":
+                raise ValueError("VB13 requires vector scalar-standard-deviation policy")
+            arm_min, arm_initial, arm_cap = (env_cfg.vb13_arm_std_min,
+                env_cfg.vb13_arm_std_initial, env_cfg.vb13_arm_std_cap)
+            leg_initial, leg_cap = env_cfg.vb13_leg_std_initial, env_cfg.vb13_leg_std_cap
+            if not (0 < arm_min <= arm_initial <= arm_cap and 0 < leg_initial <= leg_cap
+                    and all(math.isfinite(v) for v in (arm_min, arm_initial, arm_cap, leg_initial, leg_cap))):
+                raise ValueError("Invalid VB13 exploration bounds")
+            if torch.any(runner.alg.min_std[legs] > leg_initial):
+                raise ValueError("VB13 leg exploration conflicts with inherited lower bounds")
+            with torch.no_grad():
+                runner.alg.min_std[arm_indices] = arm_min
+                runner.alg.max_std[arm_indices] = arm_cap
+                runner.alg.max_std[legs] = leg_cap
+                policy.std[arm_indices] = arm_initial
+                policy.std[legs] = leg_initial
+            widths = (env.unwrapped.scene['robot'].data.joint_limits[0, :, 1]
+                      - env.unwrapped.scene['robot'].data.joint_limits[0, :, 0])
+            agent_cfg.amp_cfg.min_normalized_std = (runner.alg.min_std / widths).tolist()
+            agent_cfg.amp_cfg.max_policy_std = runner.alg.max_std.tolist()
+            runner.alg.leg_teacher_weight = .20
+            print(f"[VB13] train-only URDF gravity/PD reference, hose={env_cfg.vb11_nominal_hose_mass_kg}kg; "
+                  f"arm std={arm_initial}/{arm_cap}, leg std={leg_initial}/{leg_cap}; actor remains 70->18")
+        elif hasattr(env_cfg, "vb12_arm_noise_cap"):
             cap, initial = env_cfg.vb12_arm_noise_cap, env_cfg.vb12_arm_initial_std
             if not 0. < initial <= cap or not math.isfinite(cap):
                 raise ValueError("VB12 arm std must be finite, positive and below its cap")
