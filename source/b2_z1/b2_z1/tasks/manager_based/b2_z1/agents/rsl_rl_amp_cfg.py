@@ -989,3 +989,13 @@ class AMPVB11ReadyRunnerCfg(AMPVB10ClearanceRunnerCfg):
     def __post_init__(self):
         super().__post_init__()
         self.max_iterations = 2000
+
+
+@configclass
+class AMPVB12ScheduleRunnerCfg(AMPVB11ReadyRunnerCfg):
+    run_name = "VB12_schedule_fromVB10_12300"
+    save_interval = 50
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.max_iterations = 500

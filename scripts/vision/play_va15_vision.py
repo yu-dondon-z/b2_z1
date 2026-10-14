@@ -40,6 +40,7 @@ def main():
     parser.add_argument("--vb9", action="store_true", help="Actor-only VB9 vision playback; no training posture teacher")
     parser.add_argument("--vb10", action="store_true", help="VB10 flat-ended gun collision and measured standby before motion")
     parser.add_argument("--vb11", action="store_true", help="VB11 final-height standby and nominal full-load validation")
+    parser.add_argument("--vb12", action="store_true", help="VB12 strict startup and world-height rear-cache waiting")
     parser.add_argument("--max-steps", type=int, default=None)
     parser.add_argument("--motion-trace-csv", type=Path, default=None)
     parser.add_argument("--episode-length-s", type=float, default=None)
@@ -51,8 +52,8 @@ def main():
         parser.error("--max-steps must be positive")
     if args.episode_length_s is not None and (not math.isfinite(args.episode_length_s) or args.episode_length_s <= 0):
         parser.error("--episode-length-s must be finite and positive")
-    if sum((args.loaded_gun, args.bounded_hose, args.payout, args.vb8, args.vb9, args.vb10, args.vb11)) > 1:
-        parser.error("Choose only one task: --loaded-gun, --bounded-hose, --payout, --vb8, --vb9, --vb10 or --vb11")
+    if sum((args.loaded_gun, args.bounded_hose, args.payout, args.vb8, args.vb9, args.vb10, args.vb11, args.vb12)) > 1:
+        parser.error("Choose only one task: --loaded-gun, --bounded-hose, --payout, --vb8, --vb9, --vb10, --vb11 or --vb12")
     exchange = Path(tempfile.mkdtemp(prefix="b2_z1_va15_vision_"))
     env = os.environ.copy()
     env.update(B2_Z1_VISION_EXCHANGE=str(exchange), PYTHONUNBUFFERED="1", HYDRA_FULL_ERROR="1")
@@ -64,7 +65,8 @@ def main():
                   "--save-overlay", "--depth-shadow-filter"]
     if not args.headless:
         vision_cmd.append("--display")
-    task_name = ("Unitree-b2z1-AMP-VB11-Ready-Vision-Play" if args.vb11
+    task_name = ("Unitree-b2z1-AMP-VB12-Schedule-Vision-Play" if args.vb12
+                 else "Unitree-b2z1-AMP-VB11-Ready-Vision-Play" if args.vb11
                  else "Unitree-b2z1-AMP-VB10-Clearance-Vision-Play" if args.vb10
                  else "Unitree-b2z1-AMP-VB9-Pose-Guide-Vision-Play" if args.vb9
                  else "Unitree-b2z1-AMP-VB8-Quiet-Load-Vision-Play" if args.vb8

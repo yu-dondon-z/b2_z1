@@ -404,6 +404,21 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         runner.alg.leg_teacher_action_ids = [i for i in range(18) if i not in arm_indices]
         runner.alg.leg_teacher_weight = .05
         runner.alg.leg_teacher_yaw_release = .10
+        if hasattr(env_cfg, "vb12_arm_noise_cap"):
+            cap, initial = env_cfg.vb12_arm_noise_cap, env_cfg.vb12_arm_initial_std
+            if not 0. < initial <= cap or not math.isfinite(cap):
+                raise ValueError("VB12 arm std must be finite, positive and below its cap")
+            policy = runner.alg.policy
+            if policy.noise_std_type != "scalar" or torch.any(runner.alg.min_std[arm_indices] > cap):
+                raise ValueError("VB12 arm exploration bounds conflict with existing policy/min-std contract")
+            with torch.no_grad():
+                policy.std[arm_indices] = torch.maximum(
+                    torch.full_like(policy.std[arm_indices], initial), runner.alg.min_std[arm_indices])
+                runner.alg.max_std[arm_indices] = cap
+            agent_cfg.amp_cfg.max_policy_std = runner.alg.max_std.tolist()
+            runner.alg.leg_teacher_weight = env_cfg.vb12_leg_guide_weight
+            print(f"[VB12] Z1 exploration initial={initial}, cap={cap}; "
+                  "12 leg rows unchanged, actor still trains all 18 joints")
         print(f"[VB9] Training-only masked posture reference: arm rows={arm_indices}, "
               f"weight={env_cfg.vb9_arm_guide_weight}, warmup={env_cfg.vb9_guide_warmup_iterations}; "
               "steady-posture auxiliary targets only; inherited actuator EMA remains unchanged; "
