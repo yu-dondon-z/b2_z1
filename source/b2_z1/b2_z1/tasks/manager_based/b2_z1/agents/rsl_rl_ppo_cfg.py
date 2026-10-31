@@ -12,8 +12,8 @@ from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, R
 class PPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 24
     max_iterations = 20000
-    save_interval = 100
-    experiment_name = "b2_z1_gun"  # same as task name
+    save_interval = 500
+    experiment_name = "b2_z1_gun"  # sme as task namae
     empirical_normalization = False
     policy = RslRlPpoActorCriticCfg(
         init_noise_std=1.0,
