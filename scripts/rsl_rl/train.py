@@ -95,6 +95,7 @@ from datetime import datetime
 
 import omni
 from rsl_rl.runners import OnPolicyRunner
+from b2_z1.rsl_rl.runners import AMP_OnPolicyRunner
 
 from isaaclab.envs import (
     DirectMARLEnv,
@@ -107,6 +108,7 @@ from isaaclab.utils.dict import print_dict
 from isaaclab.utils.io import dump_pickle, dump_yaml
 
 from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper
+from b2_z1.rsl_rl.wrappers import AMPRslRlVecEnvWrapper
 
 import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils import get_checkpoint_path
@@ -202,10 +204,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         env = gym.wrappers.RecordVideo(env, **video_kwargs)
 
     # wrap around environment for rsl-rl
-    env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
+    use_amp = hasattr(agent_cfg, "amp_cfg")
+    wrapper_class = AMPRslRlVecEnvWrapper if use_amp else RslRlVecEnvWrapper
+    env = wrapper_class(env, clip_actions=agent_cfg.clip_actions)
 
     # create runner from rsl-rl
-    runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
+    runner_class = AMP_OnPolicyRunner if use_amp else OnPolicyRunner
+    runner = runner_class(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
     # write git state to logs
     runner.add_git_repo_to_log(__file__)
     # load the checkpoint

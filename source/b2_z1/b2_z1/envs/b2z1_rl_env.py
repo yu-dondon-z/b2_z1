@@ -109,6 +109,11 @@ class B2Z1ManagerBasedRLEnv(ManagerBasedRLEnv):
 
         # -- reset envs that terminated/timed-out and log the episode information
         reset_env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1)
+        # Keep the physical terminal transition; the discriminator must never see
+        # a transition from the old episode into a newly sampled reference pose.
+        if "amp_obs" in self.observation_manager.group_obs_dim:
+            self.extras["reset_env_ids"] = reset_env_ids
+            self.extras["terminal_amp_states"] = self.observation_manager.compute_group("amp_obs")[reset_env_ids].clone()
         if len(reset_env_ids) > 0:
             # trigger recorder terms for pre-reset calls
             self.recorder_manager.record_pre_reset(reset_env_ids)

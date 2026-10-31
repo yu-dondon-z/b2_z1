@@ -15,7 +15,7 @@ from . import agents
 gym.register(
     id="Unitree-b2z1-Velocity",
     # entry_point="isaaclab.envs:ManagerBasedRLEnv",
-    entry_point="b2_z1.envs:B2Z1ManagerBasedRLEnv",
+    entry_point="b2_z1.envs:B2Z1ManagerAMPBasedRLEnv",
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": f"{__name__}.b2_z1_env_cfg:B2Z1EnvCfg",
@@ -27,7 +27,7 @@ gym.register(
 gym.register(
     id="Unitree-b2z1-Velocity-Play",
     # entry_point="isaaclab.envs:ManagerBasedRLEnv",
-    entry_point="b2_z1.envs:B2Z1ManagerBasedRLEnv",
+    entry_point="b2_z1.envs:B2Z1ManagerAMPBasedRLEnv",
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": f"{__name__}.b2_z1_env_cfg:B2Z1PlayEnvCfg",

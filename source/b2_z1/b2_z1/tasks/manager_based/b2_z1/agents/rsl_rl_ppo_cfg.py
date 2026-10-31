@@ -6,6 +6,17 @@
 from isaaclab.utils import configclass
 
 from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, RslRlPpoAlgorithmCfg
+from b2_z1.amp_config import MOTION_FILES
+
+
+@configclass
+class AMPAlgorithmCfg:
+    amp_motion_files: list[str] = MOTION_FILES
+    amp_reward_coef: float = 0.2
+    amp_discr_hidden_dims: list[int] = [1024, 512]
+    amp_task_reward_lerp: float = 0.8
+    amp_num_preload_transitions: int = 2_000_000
+    min_normalized_std: list[float] = [0.01] * 18
 
 
 @configclass
@@ -13,15 +24,18 @@ class PPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 24
     max_iterations = 20000
     save_interval = 500
-    experiment_name = "b2_z1_gun"  # sme as task namae
+    experiment_name = "b2_z1_curve_amp"
     empirical_normalization = False
+    amp_cfg: AMPAlgorithmCfg = AMPAlgorithmCfg()
     policy = RslRlPpoActorCriticCfg(
+        class_name="AMP_ActorCritic",
         init_noise_std=1.0,
         actor_hidden_dims=[512, 256, 128],
         critic_hidden_dims=[512, 256, 128],
         activation="elu",
     )
     algorithm = RslRlPpoAlgorithmCfg(
+        class_name="AMP_PPO",
         value_loss_coef=1.0,
         use_clipped_value_loss=True,
         clip_param=0.2,

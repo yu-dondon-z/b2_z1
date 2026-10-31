@@ -903,10 +903,8 @@
   <joint name="joint0" type="fixed" dont_collapse="true">
       <parent link="base_link" />
       <child link="link00" />
-      <origin xyz="0 0 0.09" rpy="0 0 0" />
-
-      <!-- rot 90 deg -->
-      <!-- <origin xyz="0 0 0.09" rpy="0 0 1.5708" /> -->
+      <!-- Rear-facing Z1 mount: +X in link00 points toward -X in base_link. -->
+      <origin xyz="0 0 0.09" rpy="0 0 3.141592653589793" />
 
       <axis xyz="0 0 1" />
       <limit lower="-2.6179939" upper="2.6179939" effort="30" velocity="3.1415" />

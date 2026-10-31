@@ -11,6 +11,21 @@ if TYPE_CHECKING:
 
 from isaaclab.utils.math import quat_apply_inverse, quat_conjugate, quat_mul
 
+
+def amp_foot_pos(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
+    """Dataset-ordered foot positions in the base frame, without arm features."""
+    asset = env.scene[asset_cfg.name]
+    feet_w = asset.data.body_pos_w[:, asset_cfg.body_ids]
+    root_quat = asset.data.root_quat_w[:, None, :].expand(-1, feet_w.shape[1], -1)
+    return quat_apply_inverse(root_quat, feet_w - asset.data.root_pos_w[:, None, :]).reshape(env.num_envs, -1)
+
+
+def amp_base_height(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
+    """Height above the local flat ground used by the reference motions."""
+    asset = env.scene[asset_cfg.name]
+    ground_height = env.cfg.commands.base_velocity.ground_height
+    return (asset.data.root_pos_w[:, 2] - env.scene.env_origins[:, 2] - ground_height).unsqueeze(-1)
+
 def base_external_force(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg,

@@ -59,7 +59,10 @@ class UniformPoseWBCCommandCfg(UniformPoseCommandBaseCfg):
     limit_ranges: UniformPoseCommandBaseCfg.Ranges = None  # type: ignore
     """The range limit """
     link_name: str = "link00"
-    """The name of the root body, which serves as the reference frame for the command."""
+    """Sampling frame for target XY and orientation; +X points rearward on the rear-mounted Z1.
+
+    Target Z is a world-frame height. Commands returned to the policy are in base_name's frame.
+    """
     base_name: str = "base_link"
     """The name of the robot base body used as the output command frame."""
     curriculum_enabled: bool = False
@@ -113,8 +116,10 @@ class CurveVelocityCommandCfg(UniformVelocityCommandCfg):
     ground_curve_z_offset: float = 0.002
     """Strip center height above the ground (m), avoiding coplanar rendering artifacts."""
 
-    camera_position_b: tuple[float, float, float] = (0.25, 0.0, 0.05)
-    camera_rpy_b: tuple[float, float, float] = (0.0, math.radians(35.0), 0.0)
+    # B2 joint_f_dc mount from b2_z1_gun.urdf, below the head-mounted lidar.
+    camera_position_b: tuple[float, float, float] = (0.41251, 0.024997, 0.04765)
+    # URDF optical RPY (-135, 0, -90) deg expressed as x-forward/y-left/z-up.
+    camera_rpy_b: tuple[float, float, float] = (0.0, math.radians(45.0), 0.0)
     """Camera mount RPY (rad) in x-forward, y-left, z-up convention; positive pitch looks down."""
     camera_intrinsics: tuple[float, float, float, float] = (320.0, 320.0, 320.0, 240.0)
     """Ideal pinhole (fx, fy, cx, cy), in pixels; configure for the actual camera."""

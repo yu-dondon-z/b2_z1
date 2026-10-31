@@ -62,13 +62,18 @@ _build
 /.pretrained_checkpoints/
 
 # Teleop Recorded Dataset
-datasets
+datasets/*
+!datasets/b2_motion/
+datasets/b2_motion/*
+!datasets/b2_motion/*.txt
 
 # Tests
 tests/
 !/tests/
 /tests/*
 !/tests/test_curve_tracking.py
+!/tests/test_amp.py
+!/tests/test_rear_arm.py
 
 # Docker history
 .isaac-lab-docker-history

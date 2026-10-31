@@ -43,7 +43,11 @@ if TYPE_CHECKING:
 
 
 class UniformPoseWBCCommand(CommandTerm):
-    """Command generator for pose tracking with interpolated target motion."""
+    """Interpolate EE targets sampled in the arm mount frame and output base-frame poses.
+
+    XY and orientation follow link00, including its rear-facing installation;
+    Z remains a world height. Mount rotation is applied once by the frame transforms.
+    """
 
     cfg: UniformPoseWBCCommandCfg
 
@@ -140,9 +144,13 @@ class UniformPoseWBCCommand(CommandTerm):
         self.pose_target_pos_w[env_ids] = self._get_target_pos_w(env_ids)
         self._sample_curve_control_points(env_ids)
         self._command_duration[env_ids] = self.time_left[env_ids].clamp_min(self.env.step_dt)
+        # Tensor indexing returns a copy: explicitly write the transformed start
+        # pose back so reset observations already contain the correct arm side.
+        pose_command = self.pose_command[env_ids]
         self._update_command_from_world_pose(
-            self._get_curve_start_pos_w(env_ids), self._get_target_quat_w(env_ids), self.pose_command[env_ids], env_ids
+            self._get_curve_start_pos_w(env_ids), self._get_target_quat_w(env_ids), pose_command, env_ids
         )
+        self.pose_command[env_ids] = pose_command
         self._reset_tracked_trajectory(env_ids)
 
     def _update_command(self):

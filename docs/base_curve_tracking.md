@@ -2,6 +2,28 @@
 
 `base_velocity` 使用 `CurveVelocityCommandCfg`。独立地面路径复用现有 EE 曲线的三次 Bézier 插值形式，控制点在重采样时固定到世界坐标系；EE 的位置、姿态和跟踪误差不参与底盘指令计算。
 
+## AMP 步态
+
+`Unitree-b2z1-Velocity` 和 `Unitree-b2z1-Velocity-Play` 现在使用从 `origin/amp_loco`（`3d279d8`）移植的 AMP-PPO。原有训练与 Play 脚本会根据 `agent_cfg.amp_cfg` 自动选择 AMP runner 和 wrapper，底盘曲线指令、机械臂观测和 18 维动作接口保持原有形式。
+
+`datasets/b2_motion/` 包含该分支的 19 份 B2 动作数据。判别器使用相邻两帧的 43 维观测：腿关节位置 12、足端本体位置 12、本体线速度 3、角速度 3、腿关节速度 12、离地高度 1。关节和足端通过名字显式排列为 `FL, FR, RL, RR`，每条腿关节依次为 `hip, thigh, calf`；机械臂不进入动作先验。
+
+已移除 `feet_gait`、`feet_height`、`air_time_variance`、三项 `stand_still_*`、`hip_deviation`、`joint_deviation`、固定 `base_height_l2` 和 `flat_orientation_l2`。保留速度跟踪、机械臂姿态和末端稳定、打滑、关节限位、接触及动作平滑等奖励。步态配对、摆腿高度和本体姿态由参考动作先验学习。
+
+AMP 参数在 `agents/rsl_rl_ppo_cfg.py` 中设置：`amp_reward_coef=0.2`、`amp_task_reward_lerp=0.8`、判别器隐藏层 `[1024, 512]`。总奖励为 `0.8 * task_reward + 0.2 * amp_reward`，其中 `amp_reward` 已乘 `amp_reward_coef`；任务奖励仍由 Isaac Lab 乘控制步长计算。
+
+训练默认以概率 1.0 从参考动作初始化本体和腿关节，机械臂沿用默认重置。写入参考状态并刷新运动学后，底盘和机械臂两条世界坐标曲线都会重新采样。Play 默认使用正常站立初始化。终止前的 AMP 状态单独保存，避免跨 episode 的跳变进入判别器；检查点同时保存策略、判别器、优化器和 AMP 归一化统计。
+
+新实验目录为 `logs/rsl_rl/b2_z1_curve_amp`。需要重新训练以获得 AMP 步态；旧 PPO 检查点可以使用 Play 加载策略，但不会因为奖励配置改变而自动产生新步态。训练续跑需要包含判别器状态的新 AMP 检查点。
+
+## 后向机械臂与 EE 指令
+
+`assets/b2_z1/b2_z1_gun.urdf` 中，`base_link -> link00` 的固定安装关节 `joint0` 绕 Z 轴旋转 `pi`，使整套 Z1 机械臂及工具朝向 B2 后方。安装位置仍为 `(0, 0, 0.09)` 米，六个运动关节沿用现有初始角度；正常重置和 AMP 参考动作重置都使用这一安装方向。
+
+`ee_target` 显式使用 `link_name="link00"` 采样 XY 和 RPY，向策略输出时转换到 `base_link`。训练与 Play 的 `pos_x=(1, 1)` 因此对应底盘坐标系中的 `x=-1` 米；`pos_y=0`，`pos_z=0.2` 为世界高度。`pitch=pi/2` 和 `yaw=0` 也相对于后向安装坐标系，目标姿态、Bézier 控制点以及轨迹可视化均随安装变换一起转向后方。
+
+底盘依旧沿自身正 X 方向前进，前置地面相机和独立底盘曲线保持现有方向。机械臂默认姿态惩罚继续以相同关节角为参考，位置/姿态误差和策略观测继续使用底盘坐标系；新的安装方向需要重新训练策略。
+
 ## 指令计算
 
 每个控制步执行：
@@ -35,8 +57,8 @@ yaw_rate = clip(heading_control_stiffness * heading_error + forward_speed * curv
 | `trajectory_num_points` | `96` | 曲线采样点数 |
 | `trajectory_curve_offset_scale` | `0.1` | 横向控制点偏移占路径长度的比例；设为 `0` 可验证直线 |
 | `resampling_time_range` | 环境中 `(10, 10)` | 独立路径重采样周期，s |
-| `camera_position_b` | `(0.25, 0, 0.05)` | 相机相对 base 的安装位置，m |
-| `camera_rpy_b` | `(0, 35°, 0)`，以弧度存储 | 相机安装姿态；正 pitch 向下看 |
+| `camera_position_b` | `(0.41251, 0.024997, 0.04765)` | B2 前深度相机相对 base 的安装位置，m |
+| `camera_rpy_b` | `(0, 45°, 0)`，以弧度存储 | 相机安装姿态；正 pitch 向下看 |
 | `camera_intrinsics` | `(320, 320, 320, 240)` | `fx, fy, cx, cy`，像素 |
 | `camera_image_size` | `(640, 480)` | 图像宽、高 |
 | `camera_depth_range` | `(0.05, 5)` | 相机前向深度范围，m |
@@ -48,7 +70,9 @@ yaw_rate = clip(heading_control_stiffness * heading_error + forward_speed * curv
 
 相机安装坐标使用 x 前、y 左、z 上。对应的光学坐标为 x 右、y 下、z 前，即 `(-y, -z, x)`。投影使用 base 的完整姿态，控制误差使用仅包含 yaw 的水平坐标系，因此会补偿 roll、pitch 和机身高度变化。
 
-控制器仍采用理想曲线像素观测，不包含遮挡、畸变和图像检测误差。安装参数是可调的示例值，应替换为实际标定结果。没有连续可见线段时，yaw 角速度指令为零，前向速度指令保持不变；`path_visible` 指标记录这种情况。
+安装位置参考仓库 `assets/b2_z1/b2_z1_gun.urdf` 和[宇树官方 B2 URDF 的 `joint_f_dc`](https://github.com/unitreerobotics/unitree_ros/blob/master/robots/b2_description/urdf/b2_description.urdf)：光学坐标 RPY 约为 `(-135°, 0°, -90°)`，换算到上述相机坐标约定后约为向下 45°，位于头部雷达下方。内参仍为理想针孔参数；上真机时应使用实际标定结果。
+
+控制器仍采用理想曲线像素观测，不包含遮挡、畸变和图像检测误差。没有连续可见线段时，yaw 角速度指令为零，前向速度指令保持不变；`path_visible` 指标记录这种情况。
 
 ## 训练与 Play 的实际相机
 
@@ -89,6 +113,12 @@ CPU 数值测试（需要 PyTorch，无需启动 Isaac Sim）：
 
 ```bash
 python -m unittest discover -s tests -p test_curve_tracking.py -v
+
+# AMP 数据、插值、训练更新、参考状态重置及检查点测试；还需要 RSL-RL 2.3.x。
+python -m unittest discover -s tests -p test_amp.py -v
+
+# 后向安装的 URDF 正运动学、EE 目标/轨迹变换和部分环境重采样测试。
+python -m unittest discover -s tests -p test_rear_arm.py -v
 ```
 
 测试覆盖投影回算、视野筛选、转向符号、曲率、坐标变换、部分环境重采样，以及简化运动学闭环；不代替 Isaac Sim 动力学验证。

@@ -59,6 +59,7 @@ import time
 import torch
 
 from rsl_rl.runners import OnPolicyRunner
+from b2_z1.rsl_rl.runners import AMP_OnPolicyRunner
 
 from isaaclab.envs import (
     DirectMARLEnv,
@@ -72,6 +73,7 @@ from isaaclab.utils.dict import print_dict
 from isaaclab.utils.pretrained_checkpoint import get_published_pretrained_checkpoint
 
 from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper, export_policy_as_jit, export_policy_as_onnx
+from b2_z1.rsl_rl.wrappers import AMPRslRlVecEnvWrapper
 
 import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils import get_checkpoint_path
@@ -132,12 +134,15 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         env = gym.wrappers.RecordVideo(env, **video_kwargs)
 
     # wrap around environment for rsl-rl
-    env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
+    use_amp = hasattr(agent_cfg, "amp_cfg")
+    wrapper_class = AMPRslRlVecEnvWrapper if use_amp else RslRlVecEnvWrapper
+    env = wrapper_class(env, clip_actions=agent_cfg.clip_actions)
 
     print(f"[INFO]: Loading model checkpoint from: {resume_path}")
     # load previously trained model
-    ppo_runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
-    ppo_runner.load(resume_path)
+    runner_class = AMP_OnPolicyRunner if use_amp else OnPolicyRunner
+    ppo_runner = runner_class(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
+    ppo_runner.load(resume_path, load_optimizer=False)
 
     # obtain the trained policy for inference
     policy = ppo_runner.get_inference_policy(device=env.unwrapped.device)

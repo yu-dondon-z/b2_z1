@@ -117,15 +117,8 @@ B2_Z1_GUN_CFG = UnitreeArticulationCfg(
             "R[L,R]_thigh_joint": 1.0,
             ".*_calf_joint": -1.5,
             
-            # # z1 -- roted --
-            # "joint1": 0.0,
-            # "joint2": 0.4, 
-            # "joint3": -0.4,
-            # "joint4": -0.4,
-            # "joint5": 0.0,
-            # "joint6": 0.0,
-            
-            # z1 forward
+            # Z1 extends along +X of link00. joint0 in the URDF rotates the
+            # entire mount by pi, so this posture points toward the B2's rear.
             "joint1": 0.0,
             "joint2": 2.55,
             "joint3": -1.6,
