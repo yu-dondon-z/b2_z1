@@ -35,6 +35,8 @@ from isaaclab.utils.math import (
     quat_unique,
 )
 
+from .curve_geometry import cubic_bezier
+
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
     from .command_cfg import UniformPoseWBCCommandCfg
@@ -236,7 +238,6 @@ class UniformPoseWBCCommand(CommandTerm):
             progress = progress.unsqueeze(-1)
 
         is_trajectory_sampling = progress.ndim == 3
-        one_minus_t = 1.0 - progress
         if is_trajectory_sampling:
             start_pos = self._get_curve_start_pos_w().unsqueeze(1)
             control_point_1 = self._get_curve_control_points_w()[:, 0].unsqueeze(1)
@@ -248,12 +249,7 @@ class UniformPoseWBCCommand(CommandTerm):
             control_point_2 = self._get_curve_control_points_w()[:, 1]
             target_pos = self._get_target_pos_w()
 
-        return (
-            (one_minus_t**3) * start_pos
-            + 3.0 * (one_minus_t**2) * progress * control_point_1
-            + 3.0 * one_minus_t * (progress**2) * control_point_2
-            + (progress**3) * target_pos
-        )
+        return cubic_bezier(start_pos, control_point_1, control_point_2, target_pos, progress)
 
     def _get_target_quat_w(self, env_ids: torch.Tensor | None = None) -> torch.Tensor:
         if env_ids is None:

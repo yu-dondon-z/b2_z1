@@ -1,6 +1,9 @@
 import torch
 from typing import Dict, Any
 from isaaclab.envs import ManagerBasedRLEnv
+from isaaclab.sensors import CameraCfg
+
+from b2_z1.tasks.manager_based.b2_z1.mdp.commands.curve_camera import make_curve_camera_cfg
 
 class B2Z1ManagerBasedRLEnv(ManagerBasedRLEnv):
     
@@ -12,6 +15,13 @@ class B2Z1ManagerBasedRLEnv(ManagerBasedRLEnv):
             render_mode: The render mode for the environment. Defaults to None.
             **kwargs: Additional keyword arguments (e.g., env_cfg_entry_point from gym.register).
         """
+        # Rebuild after Hydra/CLI overrides so the physical camera and geometric commands
+        # always use the same calibration, including late resolution or mount changes.
+        camera_cfg = getattr(cfg.scene, "base_camera", None)
+        if camera_cfg is not None:
+            cfg.scene.base_camera = make_curve_camera_cfg(
+                cfg.commands.base_velocity, render=isinstance(camera_cfg, CameraCfg)
+            )
         super().__init__(cfg, render_mode=render_mode, **kwargs)
         self._pre_pre_action = torch.zeros((self.num_envs, self.action_manager.total_action_dim), device=self.device)
         

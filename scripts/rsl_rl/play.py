@@ -40,8 +40,8 @@ cli_args.add_rsl_rl_args(parser)
 AppLauncher.add_app_launcher_args(parser)
 # parse the arguments
 args_cli, hydra_args = parser.parse_known_args()
-# always enable cameras to record video
-if args_cli.video:
+# The Play environment creates RGB base-camera sensors; enable RTX before launching Kit.
+if args_cli.video or (args_cli.task and args_cli.task.split(":")[-1] == "Unitree-b2z1-Velocity-Play"):
     args_cli.enable_cameras = True
 
 # clear out sys.argv for Hydra
@@ -160,6 +160,21 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     dt = env.unwrapped.step_dt
 
+    # Show environment 0's real camera image in an Isaac Sim window. RGB is not a policy input.
+    base_camera = env.unwrapped.scene.sensors.get("base_camera")
+    camera_window = None
+    camera_provider = None
+    camera_elapsed = 0.0
+    if base_camera is not None and env.unwrapped.sim.has_gui():
+        import omni.ui as ui
+
+        camera_provider = ui.ByteImageProvider()
+        camera_window = ui.Window(
+            "Base camera — environment 0", width=base_camera.cfg.width, height=base_camera.cfg.height + 30
+        )
+        with camera_window.frame:
+            ui.ImageWithProvider(camera_provider)
+
     # reset environment
     obs, _ = env.get_observations()
     timestep = 0
@@ -172,6 +187,18 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             actions = policy(obs)
             # env stepping
             obs, _, _, _ = env.step(actions)
+            camera_elapsed += dt
+            if (
+                camera_provider is not None
+                and camera_window.visible
+                and camera_elapsed + 1.0e-9 >= base_camera.cfg.update_period
+            ):
+                camera_elapsed = 0.0
+                rgb = base_camera.data.output["rgb"][0, ..., :3]
+                rgba = torch.cat((rgb, torch.full_like(rgb[..., :1], 255)), dim=-1)
+                camera_provider.set_bytes_data(
+                    rgba.cpu().numpy().flatten().data, [base_camera.cfg.width, base_camera.cfg.height]
+                )
         if args_cli.video:
             timestep += 1
             # Exit the play loop after recording one video
@@ -184,6 +211,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             time.sleep(sleep_time)
 
     # close the simulator
+    if camera_window is not None:
+        camera_window.visible = False
     env.close()
 
 

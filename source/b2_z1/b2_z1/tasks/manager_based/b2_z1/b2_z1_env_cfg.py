@@ -18,13 +18,14 @@ from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils import configclass
-from isaaclab.sensors import ContactSensorCfg, RayCasterCfg, patterns
+from isaaclab.sensors import CameraCfg, ContactSensorCfg, RayCasterCfg, patterns
 
 from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
 from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
 
 from . import mdp
+from .mdp.commands.curve_camera import make_curve_camera_cfg
 
 ##
 # Pre-defined configs
@@ -65,6 +66,9 @@ class B2Z1SceneCfg(InteractiveSceneCfg):
     
     contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=3, 
                                       track_air_time=True, debug_vis=False)
+
+    # Populated from commands.base_velocity calibration: USD prim in training, RGB sensor in Play.
+    base_camera: AssetBaseCfg | CameraCfg | None = None
     
     
 
@@ -234,23 +238,21 @@ class EventCfg:
 class CommandsCfg:
     """Command specifications for the MDP."""
     
-    base_velocity = mdp.command_cfg.UniformVelocityCommandCfg(
+    base_velocity = mdp.command_cfg.CurveVelocityCommandCfg(
         asset_name="robot",
         resampling_time_range=(10.0, 10.0),
-        rel_standing_envs=0.33,
-        debug_vis=True,
-        heading_command=False,
+        forward_speed=0.4,
+        lookahead_distance=0.6,
+        debug_vis=False,
         ranges=mdp.command_cfg.UniformVelocityCommandCfg.Ranges(
-            lin_vel_x=(-0.0, 0.0),
-            lin_vel_y=(-0.0, 0.0),
-            ang_vel_z=(-0.0, 0.0),
-            heading=(-0.0, 0.0),
+            lin_vel_x=(0.4, 0.4),
+            lin_vel_y=(0.0, 0.0),
+            ang_vel_z=(-0.8, 0.8),
         ),
         limit_ranges=mdp.command_cfg.UniformVelocityCommandCfg.Ranges(
-            lin_vel_x=(-1.0, 1.0),
-            lin_vel_y=(-1.0, 1.0),
-            ang_vel_z=(-1.0, 1.0),
-            heading=(-0.0, 0.0),
+            lin_vel_x=(0.4, 0.4),
+            lin_vel_y=(0.0, 0.0),
+            ang_vel_z=(-0.8, 0.8),
         ),
     )
     
@@ -605,8 +607,9 @@ class CurriculumCfg:
 
     # lin_vel_cmd_levels = CurrTerm(mdp.lin_vel_cmd_levels)
     
-    lin_vel_cmd_levels = CurrTerm(func=mdp.lin_vel_cmd_levels)  # type: ignore
-    ang_vel_cmd_levels = CurrTerm(func=mdp.ang_vel_cmd_levels)  # type: ignore
+    # Base commands come from fixed-speed curve following, without velocity-range curricula.
+    lin_vel_cmd_levels = None
+    ang_vel_cmd_levels = None
     # pos_cmd_levels = CurrTerm(func=mdp.pos_cmd_levels)  # type: ignore
     
 
@@ -653,6 +656,7 @@ class B2Z1EnvCfg(ManagerBasedRLEnvCfg):
         # update sensor update periods
         # we tick all the sensors based on the smallest update period (physics update period)
         self.scene.contact_forces.update_period = self.sim.dt
+        self.scene.base_camera = make_curve_camera_cfg(self.commands.base_velocity, render=False)
         
         ######### Reward Settings #########
           
@@ -713,7 +717,7 @@ class B2Z1EnvCfg(ManagerBasedRLEnvCfg):
         self.rewards.undesired_contacts.weight = -1.0
         
         
-        self.commands.base_velocity.curriculum_enabled = True
+        self.commands.base_velocity.curriculum_enabled = False
         self.commands.ee_target.curriculum_enabled = True
         # self.commands.ee_target.curriculum_enabled = False
         
@@ -725,18 +729,10 @@ class B2Z1PlayEnvCfg(B2Z1EnvCfg):
     def __post_init__(self):
         super().__post_init__()
         self.scene.num_envs = 32
-        
-        self.commands.base_velocity.limit_ranges.lin_vel_x = (0.0, 0.6)
-        self.commands.base_velocity.limit_ranges.lin_vel_y = (-0.0, 0.0)
-        self.commands.base_velocity.limit_ranges.ang_vel_z = (-0.0, 0.0)
-        self.commands.base_velocity.ranges = self.commands.base_velocity.limit_ranges
-        
+        self.commands.base_velocity.debug_vis = True
+        self.scene.base_camera = make_curve_camera_cfg(self.commands.base_velocity, render=True)
         
         self.commands.ee_target.limit_ranges.pos_x = (1.0, 1.0)
         self.commands.ee_target.limit_ranges.pos_y = (-0.0, 0.0)
         self.commands.ee_target.limit_ranges.pos_z = (0.2, 0.2)
         self.commands.ee_target.ranges = self.commands.ee_target.limit_ranges
-        
-        
-        
-        

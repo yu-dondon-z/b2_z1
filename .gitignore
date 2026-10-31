@@ -66,6 +66,9 @@ datasets
 
 # Tests
 tests/
+!/tests/
+/tests/*
+!/tests/test_curve_tracking.py
 
 # Docker history
 .isaac-lab-docker-history
