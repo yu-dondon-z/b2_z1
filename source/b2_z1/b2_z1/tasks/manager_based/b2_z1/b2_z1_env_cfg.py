@@ -100,8 +100,11 @@ class ObservationsCfg:
         """Observations for policy group."""
 
         # observation terms (order preserved)
-        velocity_commands = ObsTerm(func=mdp.generated_commands, clip=(-100, 100), params={"command_name": "base_velocity"})
-        target_commands = ObsTerm(func=mdp.generated_commands, clip=(-100, 100), params={"command_name": "ee_target"})
+        velocity_commands = ObsTerm(func=mdp.generated_commands, 
+                                    clip=(-100, 100), params={"command_name": "base_velocity"})
+        
+        target_commands = ObsTerm(func=mdp.generated_commands, 
+                                  clip=(-100, 100), params={"command_name": "ee_target"})
         
         
         base_ang_vel = ObsTerm(func=mdp.base_ang_vel, scale=0.2, clip=(-100, 100), noise=Unoise(n_min=-0.2, n_max=0.2))
@@ -114,6 +117,8 @@ class ObservationsCfg:
         def __post_init__(self) -> None:
             self.enable_corruption = False
             self.concatenate_terms = True
+            
+            
 
     # observation groups
     policy: PolicyCfg = PolicyCfg()
@@ -248,6 +253,8 @@ class CommandsCfg:
             heading=(-0.0, 0.0),
         ),
     )
+    
+    # yaw_velocy = mdp.command_cfg.UniformVelocityCommandCfg()
     
     
     ee_target = mdp.command_cfg.UniformPoseWBCCommandCfg(
@@ -424,7 +431,8 @@ class RewardsCfg:
     
     arm_deviation = RewTerm(
         func=mdp.joint_deviation_l1,
-        weight=-0.1,
+        # weight=-0.1,
+        weight=-1.0,
         params={
             "asset_cfg": SceneEntityCfg(
                 "robot", joint_names=[ "joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
