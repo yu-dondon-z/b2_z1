@@ -267,9 +267,13 @@ class CommandsCfg:
     
     base_velocity = mdp.command_cfg.CurveVelocityCommandCfg(
         asset_name="robot",
-        resampling_time_range=(10.0, 10.0),
+        resampling_time_range=(25.0, 25.0),
         forward_speed=0.4,
         lookahead_distance=0.6,
+        path_type="turn",
+        trajectory_num_points=192,
+        turn_count_range=(2, 3),
+        max_curvature=1.0,
         trajectory_curve_offset_scale=0.0,
         limit_trajectory_curve_offset_scale=0.1,
         debug_vis=False,
@@ -425,7 +429,7 @@ class B2Z1EnvCfg(ManagerBasedRLEnvCfg):
         """Post initialization."""
         # general settings
         self.decimation = 4
-        self.episode_length_s = 20.0
+        self.episode_length_s = 30.0
         # # viewer settings
         # self.viewer.eye = (8.0, 0.0, 5.0)
 
@@ -462,9 +466,13 @@ class B2Z1PlayEnvCfg(B2Z1EnvCfg):
         
         
         
-        self.commands.base_velocity.curriculum_enabled = False
-        # Radius >= 5 m; at 0.4 m/s, curvature feedforward uses at most 0.08 rad/s.
-        self.commands.base_velocity.max_curvature = 1.5
+        # self.commands.base_velocity.curriculum_enabled = False
+        # maximum_turns = self.commands.base_velocity.turn_count_range[1]
+        # self.commands.base_velocity.turn_count_range = (maximum_turns, maximum_turns)
+        # maximum_angle = self.commands.base_velocity.turn_angle_range[1]
+        # self.commands.base_velocity.turn_angle_range = (maximum_angle, maximum_angle)
+        # # Hard cap; nominal turn_curvature is 1.0 1/m (radius 1 m).
+        # self.commands.base_velocity.max_curvature = 1.5
         self.commands.base_velocity.debug_vis = True
         
         

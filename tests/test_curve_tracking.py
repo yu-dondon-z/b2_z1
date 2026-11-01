@@ -90,7 +90,7 @@ class VelocityCommandFixture:
         self.robot = env.scene["robot"]
         self.vel_command_b = torch.zeros(env.num_envs, 3)
         self.heading_target = torch.zeros(env.num_envs)
-        self.time_left = torch.full((env.num_envs,), 10.0)
+        self.time_left = torch.full((env.num_envs,), float(cfg.resampling_time_range[0]))
         self.is_standing_env = torch.zeros(env.num_envs, dtype=torch.bool)
         self.is_heading_env = torch.zeros_like(self.is_standing_env)
         self.metrics = {}
@@ -161,9 +161,16 @@ with patch.dict(
 def make_command(count=3, **options):
     cfg = types.SimpleNamespace(
         forward_speed=0.4,
+        resampling_time_range=(10.0, 10.0),
         lookahead_distance=0.6,
         heading_control_stiffness=1.5,
         trajectory_num_points=96,
+        path_type="bezier",
+        turn_count_range=(1, 1),
+        turn_angle_range=(math.pi / 4, math.pi / 2),
+        turn_curvature=1.0,
+        turn_start_distance=0.8,
+        turn_gap_distance=1.0,
         trajectory_curve_offset_scale=0.1,
         limit_trajectory_curve_offset_scale=0.1,
         max_curvature=None,
@@ -211,7 +218,83 @@ def analytic_bezier_curvatures(control_points, num_samples=1025):
     return cross / torch.linalg.vector_norm(velocity, dim=-1).pow(3)
 
 
+def polyline_curvatures(points):
+    points = points.to(torch.float64)[..., :2]
+    before, after = points[:, 1:-1] - points[:, :-2], points[:, 2:] - points[:, 1:-1]
+    cross = before[..., 0] * after[..., 1] - before[..., 1] * after[..., 0]
+    denominator = before.norm(dim=-1) * after.norm(dim=-1) * (before + after).norm(dim=-1)
+    return 2.0 * cross / denominator
+
+
 class GeometryTests(unittest.TestCase):
+    def test_three_turn_path_preserves_angles_length_and_curvature(self):
+        lengths = torch.full((2,), 11.2, dtype=torch.float64)
+        angles = torch.tensor([[math.pi / 2, -math.pi / 2, math.pi / 2]], dtype=torch.float64).repeat(2, 1)
+        angles[1] *= -1
+        points, actual = geometry.multi_turn_path(
+            lengths, angles, 1.0, 0.8, 1.0, 0.6, torch.linspace(0, 1, 8193, dtype=torch.float64)
+        )
+        torch.testing.assert_close(actual, angles)
+        torch.testing.assert_close(points[:, -1, 0], torch.full((2,), 4.8, dtype=torch.float64))
+        torch.testing.assert_close(points[:, -1, 1], angles[:, 0].sign() * (4 + 11.2 - 0.8 - 2 - 3 * math.pi / 2))
+        segments = points[:, 1:] - points[:, :-1]
+        torch.testing.assert_close(segments.norm(dim=-1).sum(dim=-1), lengths, atol=1e-6, rtol=1e-6)
+        torch.testing.assert_close(torch.atan2(segments[:, -1, 1], segments[:, -1, 0]), actual.sum(dim=-1))
+        self.assertLessEqual(polyline_curvatures(points).abs().max().item(), 1.0 + 1e-7)
+
+    def test_multiple_turns_share_length_budget_without_exceeding_curvature_limit(self):
+        lengths = torch.tensor([1.2, 5.2, 11.2], dtype=torch.float64)
+        angles = torch.tensor([[math.pi / 2, -math.pi / 2, math.pi / 2]], dtype=torch.float64).repeat(3, 1)
+        samples = torch.linspace(0, 1, 4097, dtype=torch.float64)
+        points, actual = geometry.multi_turn_path(lengths, angles, 0.2, 0.8, 1.0, 0.6, samples)
+        torch.testing.assert_close(actual.abs().sum(dim=-1), torch.tensor([0.03, 0.38, 1.56], dtype=torch.float64))
+        torch.testing.assert_close(actual[:, 0], -actual[:, 1])
+        self.assertLessEqual(polyline_curvatures(points).abs().max().item(), 0.2 + 1e-7)
+        for curvature, requested in ((0.0, angles), (1.0, torch.zeros_like(angles))):
+            straight, actual = geometry.multi_turn_path(lengths, requested, curvature, 0.8, 1.0, 0.6, samples)
+            torch.testing.assert_close(actual, torch.zeros_like(angles))
+            torch.testing.assert_close(straight[..., 0], lengths[:, None] * samples)
+            torch.testing.assert_close(straight[..., 1:], torch.zeros(3, 4097, 2, dtype=torch.float64))
+
+    def test_straight_arc_straight_has_large_turn_and_tangent_exit(self):
+        angles = torch.tensor([math.pi / 2, -math.pi / 2], dtype=torch.float64)
+        lengths = torch.full((2,), 5.2, dtype=torch.float64)
+        points, actual = geometry.straight_turn_straight(
+            lengths, angles, 1.0, 0.8, 0.6, torch.linspace(0, 1, 4097, dtype=torch.float64)
+        )
+        torch.testing.assert_close(actual, angles)
+        torch.testing.assert_close(points[:, 0], torch.zeros(2, 3, dtype=torch.float64))
+        torch.testing.assert_close(points[:, -1, 0], torch.full((2,), 1.8, dtype=torch.float64))
+        torch.testing.assert_close(points[:, -1, 1], angles.sign() * (1.0 + 5.2 - 0.8 - math.pi / 2))
+        segments = points[:, 1:] - points[:, :-1]
+        heading = torch.atan2(segments[:, -1, 1], segments[:, -1, 0])
+        torch.testing.assert_close(heading, actual)
+        torch.testing.assert_close(segments.norm(dim=-1).sum(dim=-1), lengths, atol=1e-6, rtol=1e-6)
+        self.assertLessEqual(polyline_curvatures(points).abs().max().item(), 1.0 + 1e-7)
+
+    def test_turn_path_shortens_angle_to_honor_curvature_and_length(self):
+        lengths = torch.tensor([1.2, 5.2], dtype=torch.float64)
+        angles = torch.full((2,), math.pi / 2, dtype=torch.float64)
+        samples = torch.linspace(0, 1, 2049, dtype=torch.float64)
+        points, actual = geometry.straight_turn_straight(lengths, angles, 0.2, 0.8, 0.6, samples)
+        torch.testing.assert_close(actual, torch.tensor([0.06, 0.76], dtype=torch.float64))
+        self.assertLessEqual(polyline_curvatures(points).abs().max().item(), 0.2 + 1e-7)
+        straight, actual = geometry.straight_turn_straight(lengths, angles, 0.0, 0.8, 0.6, samples)
+        torch.testing.assert_close(actual, torch.zeros_like(angles))
+        torch.testing.assert_close(straight[:, :, 0], lengths[:, None] * samples)
+        torch.testing.assert_close(straight[:, :, 1:], torch.zeros(2, 2049, 2, dtype=torch.float64))
+
+    def test_turn_path_tangent_is_continuous_at_both_joins(self):
+        length = torch.tensor([5.2], dtype=torch.float64)
+        epsilon = 1e-5
+        for join in (0.8, 0.8 + math.pi / 2):
+            samples = torch.tensor([join - epsilon, join, join + epsilon], dtype=torch.float64) / length
+            points, _ = geometry.straight_turn_straight(
+                length, torch.tensor([math.pi / 2]), 1.0, 0.8, 0.6, samples
+            )
+            tangent = torch.nn.functional.normalize(points[:, 1:] - points[:, :-1], dim=-1)
+            torch.testing.assert_close(tangent[:, 0], tangent[:, 1], atol=1e-5, rtol=0.0)
+
     def test_bezier_endpoints_and_batch_broadcasting(self):
         points = torch.randn(4, 4, 3)
         progress = torch.tensor([0.0, 0.5, 1.0]).view(1, 3, 1)
@@ -427,6 +510,34 @@ class CurveCurriculumTests(unittest.TestCase):
         )
         return env, command
 
+    def test_course_increases_corner_count_and_angles_then_stops_at_limits(self):
+        env, command = self.make_env(
+            path_type="turn", turn_count_range=(2, 3), turn_angle_range=(math.pi / 2, math.pi / 2),
+            resampling_time_range=(25.0, 25.0), trajectory_num_points=192,
+        )
+        torch.testing.assert_close(command.curve_turn_count, torch.zeros(3, dtype=torch.long))
+        for interval in range(1, 13):
+            env.common_step_counter = interval * 1000
+            level = curriculums.curve_curvature_cmd_levels(env, [0, 1, 2]).item()
+            command._resample_command([0, 1, 2])
+            expected_count = 2 if interval < 5 else 3
+            torch.testing.assert_close(command.curve_turn_count, torch.full((3,), expected_count, dtype=torch.long))
+            expected_angle = min(interval / 10, 1.0) * math.pi / 2
+            torch.testing.assert_close(command.curve_turn_angles.abs().amax(dim=-1), torch.full((3,), expected_angle))
+            self.assertLessEqual(level, 0.1 + 1e-7)
+            self.assertTrue((command.curve_turn_angles.abs() <= math.pi / 2).all())
+
+    def test_turn_curriculum_scales_angle_and_changes_only_future_paths(self):
+        env, command = self.make_env(path_type="turn", turn_angle_range=(math.pi / 2, math.pi / 2))
+        original = command.curve_points_w.clone()
+        torch.testing.assert_close(original[..., 1], torch.zeros(3, 96))
+        torch.testing.assert_close(command.curve_turn_angle, torch.zeros(3))
+        curriculums.curve_curvature_cmd_levels(env, [0, 1, 2])
+        torch.testing.assert_close(command.curve_points_w, original)
+        command._resample_command([1])
+        self.assertAlmostEqual(command.curve_turn_angle[1].abs().item(), math.pi / 20)
+        torch.testing.assert_close(command.curve_points_w[[0, 2]], original[[0, 2]])
+
     def test_promotion_preserves_paths_until_partial_resampling(self):
         env, command = self.make_env()
         original = command.curve_points_w.clone()
@@ -523,6 +634,105 @@ class CurveCurriculumTests(unittest.TestCase):
 
 
 class CommandTests(unittest.TestCase):
+    def test_full_difficulty_starts_with_three_maximum_angle_corners(self):
+        command = make_command(
+            path_type="turn", turn_count_range=(2, 3), turn_angle_range=(math.pi / 2, math.pi / 2),
+            trajectory_curve_offset_scale=0.0, resampling_time_range=(25.0, 25.0),
+            trajectory_num_points=192, max_curvature=1.5,
+        )
+        self.assertEqual(command.cfg.trajectory_curve_offset_scale, 0.1)
+        torch.testing.assert_close(command.curve_turn_count, torch.full((3,), 3, dtype=torch.long))
+        torch.testing.assert_close(command.curve_turn_angles.abs(), torch.full((3, 3), math.pi / 2))
+        torch.testing.assert_close(command.curve_path_length, torch.full((3,), 11.2))
+        torch.testing.assert_close(command.metrics["turn_count"], torch.full((3,), 3.0))
+        torch.testing.assert_close(command.metrics["turn_angle"], torch.full((3,), math.pi / 2))
+        self.assertTrue(command.path_visible.all())
+        self.assertLessEqual(polyline_curvatures(command.curve_points_w).abs().max().item(), 1.001)
+
+    def test_multi_corner_partial_resampling_preserves_other_path_metadata(self):
+        command = make_command(path_type="turn", turn_count_range=(2, 3), resampling_time_range=(25.0, 25.0))
+        fields = ("curve_points_w", "curve_turn_angles", "curve_turn_count", "curve_turn_angle", "curve_path_length")
+        original = {name: getattr(command, name).clone() for name in fields}
+        command.time_left[1] = 1.0
+        command.robot.data.body_pos_w[1, 0, 0] += 0.5
+        command._resample_command([1])
+        for name in fields:
+            torch.testing.assert_close(getattr(command, name)[[0, 2]], original[name][[0, 2]])
+        self.assertLess(command.curve_path_length[1].item(), original["curve_path_length"][1].item())
+
+    def test_kinematic_closed_loop_follows_three_maximum_corners_in_both_directions(self):
+        with patch.object(torch, "rand", return_value=torch.tensor([[0.5, 0.5, 0.5, 0.75], [0.5, 0.5, 0.5, 0.25]])):
+            command = make_command(
+                2, path_type="turn", turn_count_range=(2, 3), turn_angle_range=(math.pi / 2, math.pi / 2),
+                resampling_time_range=(25.0, 25.0), trajectory_num_points=192, max_curvature=1.5,
+            )
+        heading, zero = torch.zeros(2), torch.zeros(2)
+        for _ in range(1150):
+            command._update_command()
+            self.assertTrue(command.path_visible.all())
+            self.assertTrue((command.vel_command_b[:, 2].abs() <= 0.8).all())
+            heading += 0.02 * command.vel_command_b[:, 2]
+            command.robot.data.body_quat_w[:, 0] = quat_from_euler_xyz(zero, zero, heading)
+            command.robot.data.body_pos_w[:, 0, 0] += 0.02 * 0.4 * torch.cos(heading)
+            command.robot.data.body_pos_w[:, 0, 1] += 0.02 * 0.4 * torch.sin(heading)
+        torch.testing.assert_close(heading, command.curve_turn_angle, atol=math.radians(2.0), rtol=0.0)
+        self.assertTrue((command.lateral_error.abs() < 0.02).all())
+        self.assertTrue((command.robot.data.body_pos_w[:, 0, 0] > 4.5).all())
+
+    def test_turn_sampler_generates_45_to_90_degree_left_and_right_turns(self):
+        torch.manual_seed(7)
+        command = make_command(64, path_type="turn", max_curvature=1.5)
+        angles = command.curve_turn_angle
+        self.assertTrue((angles.abs() >= math.pi / 4).all())
+        self.assertTrue((angles.abs() <= math.pi / 2).all())
+        self.assertTrue((angles > 0).any() and (angles < 0).any())
+        self.assertTrue(command.path_visible.all())
+        self.assertIsNone(command.curve_control_points_w)
+        self.assertLessEqual(polyline_curvatures(command.curve_points_w).abs().max().item(), 1.001)
+        torch.testing.assert_close(command.metrics["turn_angle"], angles.abs())
+        segments = command.curve_points_w[:, -1] - command.curve_points_w[:, -2]
+        torch.testing.assert_close(torch.atan2(segments[:, 1], segments[:, 0]), angles, atol=1e-5, rtol=1e-5)
+
+    def test_turn_curvature_cap_and_zero_difficulty(self):
+        command = make_command(path_type="turn", max_curvature=0.2)
+        self.assertTrue((command.curve_turn_angle.abs() <= 0.76 + 1e-6).all())
+        self.assertLessEqual(polyline_curvatures(command.curve_points_w).abs().max().item(), 0.201)
+        for options in (
+            {"max_curvature": 0.0},
+            {"trajectory_curve_offset_scale": 0.0, "limit_trajectory_curve_offset_scale": 0.0},
+        ):
+            command = make_command(path_type="turn", **options)
+            torch.testing.assert_close(command.curve_points_w[..., 1], torch.zeros(3, 96))
+            torch.testing.assert_close(command.curve_turn_angle, torch.zeros(3))
+
+    def test_turn_paths_stay_world_fixed_and_partial_resets_preserve_other_environments(self):
+        command = make_command(path_type="turn")
+        points, angles = command.curve_points_w.clone(), command.curve_turn_angle.clone()
+        command.robot.data.body_pos_w[1, 0, 0] += 0.5
+        zero = torch.zeros(1)
+        command.robot.data.body_quat_w[1:2, 0] = quat_from_euler_xyz(zero, zero, torch.tensor([0.7]))
+        command._update_command()
+        torch.testing.assert_close(command.curve_points_w, points)
+        command._resample_command([1])
+        torch.testing.assert_close(command.curve_points_w[[0, 2]], points[[0, 2]])
+        torch.testing.assert_close(command.curve_turn_angle[[0, 2]], angles[[0, 2]])
+        self.assertFalse(torch.equal(command.curve_points_w[1], points[1]))
+
+    def test_kinematic_closed_loop_follows_both_90_degree_turns(self):
+        with patch.object(torch, "rand", return_value=torch.tensor([[0.5, 0.75], [0.5, 0.25]])):
+            command = make_command(2, path_type="turn", turn_angle_range=(math.pi / 2, math.pi / 2))
+        heading, zero = torch.zeros(2), torch.zeros(2)
+        for _ in range(450):
+            command._update_command()
+            self.assertTrue(command.path_visible.all())
+            self.assertTrue((command.vel_command_b[:, 2].abs() <= 0.8).all())
+            heading += 0.02 * command.vel_command_b[:, 2]
+            command.robot.data.body_quat_w[:, 0] = quat_from_euler_xyz(zero, zero, heading)
+            command.robot.data.body_pos_w[:, 0, 0] += 0.02 * 0.4 * torch.cos(heading)
+            command.robot.data.body_pos_w[:, 0, 1] += 0.02 * 0.4 * torch.sin(heading)
+        torch.testing.assert_close(heading, command.curve_turn_angle, atol=math.radians(2.0), rtol=0.0)
+        self.assertTrue((command.lateral_error.abs() < 0.02).all())
+
     def test_curvature_cap_handles_different_lengths_and_world_poses(self):
         torch.manual_seed(7)
         command = make_command(16, max_curvature=0.1)
@@ -652,6 +862,22 @@ class CommandTests(unittest.TestCase):
             {"max_curvature": float("inf")},
             {"max_curvature": 2.1},
             {"max_curvature": 0.2, "ranges": types.SimpleNamespace(ang_vel_z=(-0.04, 0.8))},
+            {"path_type": "unknown"},
+            {"turn_angle_range": (-0.1, 1.0)},
+            {"turn_angle_range": (0.0, 1.0, 2.0)},
+            {"turn_angle_range": (1.0, 0.5)},
+            {"turn_angle_range": (0.0, math.pi + 0.1)},
+            {"turn_curvature": 0.0},
+            {"turn_curvature": float("inf")},
+            {"turn_start_distance": -0.1},
+            {"path_type": "turn", "turn_curvature": 2.1},
+            {"turn_count_range": (0, 3)},
+            {"turn_count_range": (2, 4)},
+            {"turn_count_range": (3, 2)},
+            {"turn_count_range": (2.0, 3.0)},
+            {"turn_count_range": (True, 3)},
+            {"turn_gap_distance": -0.1},
+            {"turn_gap_distance": float("inf")},
         ):
             with self.subTest(options=options), self.assertRaises(ValueError):
                 make_command(**options)

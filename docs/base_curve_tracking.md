@@ -1,6 +1,6 @@
 # Base 地面曲线跟踪
 
-`base_velocity` 使用 `CurveVelocityCommandCfg`。独立地面路径复用现有 EE 曲线的三次 Bézier 插值形式，控制点在重采样时固定到世界坐标系；EE 的位置、姿态和跟踪误差不参与底盘指令计算。
+`base_velocity` 使用 `CurveVelocityCommandCfg`。环境默认生成含两到三段连续转折的地面路径，训练逐步增加转折数和角度，Play 使用三段 `90°` 转折的最高难度；也可选择原有三次 Bézier 采样。路径在重采样时固定到世界坐标系，EE 的位置、姿态和跟踪误差不参与底盘指令计算。
 
 ## AMP 步态
 
@@ -44,28 +44,50 @@ yaw_rate = clip(heading_control_stiffness * heading_error + forward_speed * curv
 
 前向相机通常看不到机身正下方，横向误差采用最近可见线段的切线向机身方向外推估计。此近似适用于平滑曲线；较急弯道、较远的近端盲区会增加误差。
 
+## 大角度转折路径
+
+环境默认 `commands.base_velocity.path_type="turn"`，路径由入弯直线、两到三段圆弧转弯、弯间直线及出弯直线组成。默认入弯直线 `0.8 m`，弯间直线 `turn_gap_distance=1.0 m`，圆弧半径 `1 m`。直线与圆弧的切线连续，连接处曲率在 `0` 与圆弧曲率之间切换。
+
+首个转弯随机选择左右方向，之后交替转向，并在每对转弯后回到初始航向，形成连续折线路径。训练完整难度下每个侧向目标从 `turn_angle_range=(pi/4, pi/2)` 采样；返回初始航向的转弯与前一弯角度相反。Play 固定使用三段最大角度转折，例如 `+90°、-90°、+90°`，或其左右镜像。
+
+路径长度按 `forward_speed * time_left + 2 * lookahead_distance` 计算。环境重采样周期增加到 `25 s`，因此默认总长由 `5.2 m` 增加到 `11.2 m`；采样点增至 192，仍按弧长等间距采样。Episode 时长增加到 `30 s`。默认三段 90° 转弯会在约 `7.51 m` 的弧长位置全部完成，留有出弯直线，能够在下一次路径重采样前走过三段转折。
+
+转向角和转弯半径可分别调整：`turn_angle_range` 控制转多少度，`turn_curvature` 控制转弯有多急。默认 `turn_curvature=1.0 m⁻¹`，在 `0.4 m/s` 时圆弧前馈角速度为 `0.4 rad/s`，低于 `0.8 rad/s` 的 yaw 限幅。路径起始切线与机身前向一致，大角度变化发生在前方圆弧中。
+
+路径较短或曲率上限较低时，采样器先缩短弯间直线，再按相同比例缩小各段转向角，保证全部转折共用的弧长预算不超过路径长度，并为出弯直线预留 `lookahead_distance`；入弯直线最多占总长四分之一。路径不会为了容纳转弯而无限延长。`curve_turn_angles` 记录每段实际角度，`curve_turn_count` 记录实际非零转折数。
+
+可通过 `env.commands.base_velocity.path_type=bezier` 使用原有控制点采样。默认路径分布已经改变，旧策略面对大角度转向的动力学表现需验证，并按需要继续训练。
+
 ## 曲率课程
 
-训练默认启用 `curve_curvature_cmd_levels`，沿用 `lin_vel_cmd_levels` 的奖励门槛思路，从直线逐步增加 Bézier 控制点的横向偏移：
+训练默认启用 `curve_curvature_cmd_levels`，沿用 `lin_vel_cmd_levels` 的奖励门槛。`turn` 模式将现有尺度转换为难度比例 `trajectory_curve_offset_scale / limit_trajectory_curve_offset_scale`，再乘到采样转向角上，并按难度增加转折数。默认阶段如下：
 
-- `commands.base_velocity.trajectory_curve_offset_scale=0.0`：初始为直线。
-- `commands.base_velocity.limit_trajectory_curve_offset_scale=0.1`：最终偏移尺度。
+| 难度比例 | 实际转折数 | 每段转向角范围 |
+| --- | --- | --- |
+| `0` | `0`，直线 | `0°` |
+| `0 < 难度 < 0.5` | `2` | `45°–90°` 乘当前难度比例 |
+| `0.5 <= 难度 < 1` | `3` | `45°–90°` 乘当前难度比例 |
+| `1`，训练上限 | `3` | `45°–90°` |
+| Play 最高难度 | `3` | 每段固定 `90°` |
+
+`turn_count_range=(2, 3)` 定义初始和最大转折数，配置支持 1 到 3 段；`turn_angle_range` 的上界定义最大单段角度。课程尺度被限制在 `limit_trajectory_curve_offset_scale`，达到上限后不再增加转折数或角度。曲率上限独立于课程，不会随等级突破配置值。
+
+- `commands.base_velocity.trajectory_curve_offset_scale=0.0`：初始难度为零，生成直线。
+- `commands.base_velocity.limit_trajectory_curve_offset_scale=0.1`：最终难度为 100%。
 - `curriculum.curve_curvature_cmd_levels.params.offset_scale_step=0.01`：每次达标增加的尺度。
 - `curriculum.curve_curvature_cmd_levels.params.reward_threshold=0.8`：线速度与转向跟踪奖励都必须超过各自权重的 80%。
 
-奖励取本次重置环境的 episode 累积值，除以最大 episode 时长，与原有速度课程一致；提前终止会降低该分数。两次检查至少间隔一个最大 episode 时长（默认 20 s），在间隔结束后的第一次非空重置时检查，因此支持异步重置；未达标时维持当前难度。日志 `Curriculum/curve_curvature_cmd_levels` 记录当前偏移尺度。
+奖励取本次重置环境的 episode 累积值，除以最大 episode 时长，与原有速度课程一致；提前终止会降低该分数。两次检查至少间隔一个最大 episode 时长（默认 30 s），在间隔结束后的第一次非空重置时检查，因此支持异步重置；未达标时维持当前难度。日志 `Curriculum/curve_curvature_cmd_levels` 记录当前课程尺度。
 
-偏移尺度是无量纲的弯曲难度参数，不是以 m⁻¹ 表示的曲率上限。实际局部曲率还取决于随机控制点和路径长度，各条路径的曲率不会随等级严格单调增加。升级只影响之后正常重采样的路径，当前世界坐标路径不会立即改变；固定前向速度 `0.4 m/s` 和 yaw 限幅 `(-0.8, 0.8) rad/s` 保持原有设置。
+尺度是无量纲的弯曲难度参数，不是以 m⁻¹ 表示的曲率上限。`bezier` 模式中它仍代表横向控制点偏移与路径长度的比例，实际曲率取决于随机控制点和路径长度。升级只影响之后正常重采样的路径，当前世界坐标路径不会立即改变；前向速度指令为 `0.4 m/s`，yaw 限幅为 `(-0.8, 0.8) rad/s`。
 
-Play 默认设置 `commands.base_velocity.curriculum_enabled=False`，命令初始化时即使用最终尺度 `0.1`，不依赖 episode 结束后再切换。训练时关闭此开关也会直接使用最终尺度；要固定测试直线，将初始尺度和最终尺度都设为 `0.0`。仅移除 curriculum term 会停留在配置的初始尺度。当前检查点沿用原有行为，不保存课程进度，续训会从配置的初始尺度重新开始。
+Play 默认设置 `commands.base_velocity.curriculum_enabled=False`、`turn_count_range=(3, 3)`、`turn_angle_range=(pi/2, pi/2)`，命令初始化时即使用最终尺度 `0.1`，从第一次采样起生成最高难度。训练时关闭课程开关也会直接使用最终尺度，角度仍按其配置范围采样；要固定测试直线，将初始尺度和最终尺度都设为 `0.0`。仅移除 curriculum term 会停留在配置的初始尺度。当前检查点沿用原有行为，不保存课程进度，续训会从配置的初始尺度重新开始。
 
-## Play 几何曲率上限
+## 几何曲率上限
 
-Play 默认设置 `commands.base_velocity.max_curvature=0.2`，单位为 m⁻¹，约束整条目标路径满足 `|κ| <= 0.2`，对应最小转弯半径 `5 m`。在 `forward_speed=0.4 m/s` 时，曲率前馈 `v * κ` 最大为 `0.08 rad/s`，低于当前 yaw 限幅 `0.8 rad/s`，为航向和横向误差纠偏留出余量。这个默认值用于温和弯道；策略的实际跟踪能力仍需通过 Play 验证。
+训练设置 `max_curvature=1.0 m⁻¹`，Play 的硬上限为 `1.5 m⁻¹`。`turn` 模式的实际圆弧曲率为 `min(turn_curvature, max_curvature)`，所以在默认 `turn_curvature=1.0` 时两者都生成半径 `1 m` 的圆弧；直线段曲率为零。`max_curvature=0.0` 生成直线，`None` 关闭额外硬上限，此时转弯仍由 `turn_curvature` 约束。
 
-该参数和偏移尺度共同作用：先按最终偏移尺度随机生成控制点，再按几何曲率上限缩小横向偏移。上限是约束，不要求每条曲线都达到该值。训练默认 `max_curvature=None`，保留已有课程行为；设为 `0.0` 时生成直线路径，`None` 关闭几何曲率约束。
-
-局部 Bézier 控制点的 X 等间隔，满足 `x'(t)=L`、`x''(t)=0`，因此整条曲线有保守上界：
+`bezier` 模式先按偏移尺度生成控制点，再按几何曲率上限缩小横向偏移。上限是约束，不要求每条曲线都达到该值。局部 Bézier 控制点的 X 等间隔，满足 `x'(t)=L`、`x''(t)=0`，因此整条曲线有保守上界：
 
 ```text
 |κ(t)| = |L * y''(t)| / (L² + y'(t)²)^(3/2)
@@ -74,11 +96,13 @@ Play 默认设置 `commands.base_velocity.max_curvature=0.2`，单位为 m⁻¹�
 
 采样器根据此解析上界缩小横向偏移，覆盖端点和采样点之间的曲线；实际曲率可能低于配置值。世界坐标系中的平移与旋转不改变曲率。参数必须非负且有限，并满足 `forward_speed * max_curvature <= min(-yaw_min, yaw_max)`；该检查只保证曲率前馈处于双向转向限幅内，完整纠偏指令仍按原有方式限幅。
 
-通过 Hydra 覆盖 Play 上限，例如改为 `0.15 m⁻¹`：
+例如固定为左右 `90°` 转向，并把圆弧曲率设为 `1.2 m⁻¹`（半径约 `0.83 m`）：
 
 ```bash
 python scripts/rsl_rl/play.py --task Unitree-b2z1-Velocity-Play --num_envs 1 \
-    --checkpoint /path/to/model.pt env.commands.base_velocity.max_curvature=0.15
+    --checkpoint /path/to/model.pt \
+    'env.commands.base_velocity.turn_angle_range=[1.57079632679,1.57079632679]' \
+    env.commands.base_velocity.turn_curvature=1.2
 ```
 
 ## 参数
@@ -91,12 +115,18 @@ python scripts/rsl_rl/play.py --task Unitree-b2z1-Velocity-Play --num_envs 1 \
 | `lookahead_distance` | `0.6` | 横向纠偏距离尺度，m；减小会加快回归 |
 | `heading_control_stiffness` | `1.5` | 角度误差到角速度的增益，1/s |
 | `ranges.ang_vel_z` | 环境中 `(-0.8, 0.8)` | yaw 角速度限幅，rad/s |
-| `trajectory_num_points` | `96` | 曲线采样点数 |
-| `trajectory_curve_offset_scale` | 配置类 `0.1`；训练初始 `0.0` | 当前横向控制点偏移占路径长度的比例，由曲率课程递增 |
-| `limit_trajectory_curve_offset_scale` | `0.1` | 最终偏移尺度；关闭课程时直接使用 |
-| `max_curvature` | 训练 `None`，Play `0.2` | 整条路径的绝对几何曲率上限，m⁻¹；`0` 为直线 |
+| `trajectory_num_points` | 配置类 `96`；环境 `192` | 曲线采样点数 |
+| `path_type` | 配置类 `bezier`；环境 `turn` | 选择原有 Bézier 或直线—圆弧—直线路径 |
+| `turn_count_range` | 训练 `(2, 3)`；Play `(3, 3)` | 初始和最大转折数，随课程增加，最多 3 段 |
+| `turn_angle_range` | 训练 `(pi/4, pi/2)`；Play `(pi/2, pi/2)` | 完整难度下转向角绝对值范围，rad；转向交替 |
+| `turn_curvature` | `1.0` | 圆弧转弯曲率，m⁻¹，受硬上限约束 |
+| `turn_start_distance` | `0.8` | 入弯前直线长度，m，短路径中最多为总长的四分之一 |
+| `turn_gap_distance` | `1.0` | 转折之间的直线长度，m；短路径中会缩短 |
+| `trajectory_curve_offset_scale` | 配置类 `0.1`；训练初始 `0.0` | 课程尺度；`turn` 模式按当前/最终尺度缩放转向角 |
+| `limit_trajectory_curve_offset_scale` | `0.1` | 最终课程尺度；关闭课程时直接使用 |
+| `max_curvature` | 训练 `1.0`，Play `1.5` | 整条路径的绝对几何曲率上限，m⁻¹；`0` 为直线 |
 | `curriculum_enabled` | 训练 `True`，Play `False` | 是否逐级增加曲线弯曲难度 |
-| `resampling_time_range` | 环境中 `(10, 10)` | 独立路径重采样周期，s |
+| `resampling_time_range` | 环境中 `(25, 25)` | 独立路径重采样周期，s；默认总长 `11.2 m` |
 | `camera_position_b` | `(0.41251, 0.024997, 0.04765)` | B2 前深度相机相对 base 的安装位置，m |
 | `camera_rpy_b` | `(0, 45°, 0)`，以弧度存储 | 相机安装姿态；正 pitch 向下看 |
 | `camera_intrinsics` | `(320, 320, 320, 240)` | `fx, fy, cx, cy`，像素 |
@@ -144,12 +174,16 @@ Play 窗口显示的是实际渲染图像，会受到机器人和场景物体遮
 开启 `base_velocity.debug_vis` 可显示地面曲线和目标 heading 箭头。数据也可通过 `env.command_manager.get_term("base_velocity")` 获取：
 
 - `curve_points_w`：世界坐标系下固定的路径点。
+- `curve_turn_angles`：各段实际转向角，形状 `[num_envs, max_turns]`，未使用的列为零，rad。
+- `curve_turn_count`：实际非零转折数；`curve_turn_angle` 为各段角度的带符号总和，rad。
+- `curve_path_length`：目标路径总弧长，m。日志 `turn_count`、`turn_angle`、`path_length` 分别记录转折数、最大单段角度绝对值及路径长度。
+- `curve_control_points_w`：仅 `bezier` 模式提供控制点张量，`turn` 模式为 `None`。
 - `camera_pixels`、`camera_visible`：投影像素及可见性掩码。
 - `perceived_curve_points_w`：由可见像素恢复的地面点，仅掩码内的点有效。
 - `lateral_error`、`heading_error`、`curvature`：控制器使用的曲线误差。
 - `heading_target`：世界坐标系下的目标 yaw，rad。
 
-训练和 Play 共用固定速度与曲线 yaw 设置，原有 base 速度范围课程已关闭。训练通过曲率课程逐渐增加弯曲难度，Play 使用最终偏移尺度并施加几何曲率上限。固定的是速度指令，实际速度仍由训练得到的策略跟踪。
+训练和 Play 共用固定速度与曲线 yaw 设置，原有 base 速度范围课程已关闭。训练逐渐放大转向角并从两段增加到三段转折，Play 固定三段最大角度，两者均施加几何曲率约束。固定的是速度指令，实际速度仍由训练得到的策略跟踪。
 
 CPU 数值测试（需要 PyTorch，无需启动 Isaac Sim）：
 
@@ -163,4 +197,4 @@ python -m unittest discover -s tests -p test_amp.py -v
 python -m unittest discover -s tests -p test_rear_arm.py -v
 ```
 
-测试覆盖 tiled 相机配置与标定重建、投影回算、视野筛选、转向符号、曲率、全路径几何曲率约束、曲率课程的门槛/异步更新/封顶、坐标变换、部分环境重采样，以及简化运动学闭环；不代替 Isaac Sim 动力学和渲染性能验证。
+测试覆盖 tiled 相机配置与标定重建、投影回算、视野筛选、转向符号、曲率、多段路径的总长和曲率约束、课程的门槛/异步更新/次数与角度封顶、坐标变换、部分环境重采样、单段及三段 90° 转向的简化运动学闭环；不代替 Isaac Sim 动力学和渲染性能验证。

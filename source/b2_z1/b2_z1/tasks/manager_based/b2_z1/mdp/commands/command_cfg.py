@@ -93,7 +93,7 @@ class UniformVelocityCommandCfg(UniformVelocityCommandBaseCfg):
 
 @configclass
 class CurveVelocityCommandCfg(UniformVelocityCommandCfg):
-    """Fixed-speed navigation along an independent, world-fixed ground Bezier curve."""
+    """Fixed-speed navigation along an independent, world-fixed ground path."""
 
     class_type: type = CurveVelocityCommand
     base_name: str = "base_link"
@@ -105,18 +105,32 @@ class CurveVelocityCommandCfg(UniformVelocityCommandCfg):
     heading_command: bool = False
     rel_standing_envs: float = 0.0
     trajectory_num_points: int = 96
+    path_type: str = "bezier"
+    """Ground path sampler: 'bezier' or tangent-continuous multi-corner 'turn'."""
+    turn_count_range: tuple[int, int] = (2, 3)
+    """Initial and maximum corner counts (1 to 3). Full curriculum difficulty uses the maximum."""
+    turn_angle_range: tuple[float, float] = (math.pi / 4, math.pi / 2)
+    """Absolute turn angle range (rad) at full curriculum difficulty; left/right is random."""
+    turn_curvature: float = 1.0
+    """Circular turn curvature magnitude (1/m), additionally bounded by max_curvature."""
+    turn_start_distance: float = 0.8
+    """Straight lead-in length (m); reduced for short paths to at most a quarter of their length."""
+    turn_gap_distance: float = 1.0
+    """Straight distance between corners (m), shortened if the path length cannot fit all gaps."""
     trajectory_curve_offset_scale: float = 0.1
     """Current lateral control-point offset limit as a fraction of the curve length.
 
     With curriculum_enabled, this is the initial bending difficulty, not a bound on curvature in 1/m.
+    In 'turn' mode, current / limit scales the sampled angles and increases corner count up to its limit.
     """
     limit_trajectory_curve_offset_scale: float = 0.1
     """Final bending difficulty; used immediately when curriculum_enabled is False."""
     max_curvature: float | None = None
     """Absolute geometric curvature limit (1/m) over the whole ground path.
 
-    None disables the limit; zero generates straight paths. The sampler reduces
-    lateral offsets using a conservative analytic bound, so paths may be gentler.
+    None disables the extra limit; zero generates straight paths. Bezier paths
+    use a conservative analytic bound; turn paths use the smaller of this limit
+    and turn_curvature, shortening the angle when the path is too short.
     """
     ground_height: float = 0.0
     """Ground plane height relative to each environment origin."""

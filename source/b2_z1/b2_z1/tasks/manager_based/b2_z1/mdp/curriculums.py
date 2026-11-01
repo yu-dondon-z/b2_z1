@@ -161,12 +161,13 @@ def curve_curvature_cmd_levels(
     reward_threshold: float = 0.8,
     offset_scale_step: float = 0.01,
 ) -> torch.Tensor:
-    """Increase Bezier bending difficulty when all velocity tracking rewards pass.
+    """Increase path bending difficulty when all velocity tracking rewards pass.
 
     Like lin_vel_cmd_levels, compare episode reward per second with a fraction
-    of its configured weight. The offset scale controls curvature indirectly;
-    it is dimensionless, not a maximum geometric curvature in 1/m. New levels
-    take effect at normal command resampling, leaving existing world paths fixed.
+    of its configured weight. The offset scale controls Bezier offsets or the
+    fraction of the full turn angle and bounded corner count; it is not a geometric
+    curvature in 1/m. New levels take effect at normal command resampling, leaving
+    existing world paths fixed.
     """
     if not reward_term_names or not 0.0 < reward_threshold <= 1.0:
         raise ValueError("Specify tracking reward terms and a reward_threshold in (0, 1].")

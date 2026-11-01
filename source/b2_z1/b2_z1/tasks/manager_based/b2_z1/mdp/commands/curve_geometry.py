@@ -49,6 +49,79 @@ def limit_ground_curve_curvature(control_points: torch.Tensor, max_curvature: fl
     return limited
 
 
+def straight_turn_straight(
+    length: torch.Tensor,
+    turn_angle: torch.Tensor,
+    curvature: float,
+    lead_in_distance: float,
+    lead_out_distance: float,
+    progress: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Single-turn interface to multi_turn_path; return points and signed angle."""
+    points, angles = multi_turn_path(
+        length, turn_angle.unsqueeze(-1), curvature, lead_in_distance, 0.0, lead_out_distance, progress
+    )
+    return points, angles[:, 0]
+
+
+def multi_turn_path(
+    length: torch.Tensor,
+    turn_angles: torch.Tensor,
+    curvature: float,
+    lead_in_distance: float,
+    turn_gap_distance: float,
+    lead_out_distance: float,
+    progress: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Sample tangent-continuous circular turns separated by straight segments.
+
+    turn_angles has shape (environments, turns), with signed radians. Return
+    equal-arc-length ground samples and actual angles. Reserve lead-in, gaps,
+    and lead-out before uniformly shrinking angles to fit the length budget.
+    This preserves curvature bounds and the relative turn pattern on short paths.
+    """
+    distance = length.unsqueeze(-1) * progress.reshape(1, -1)
+    points = torch.zeros(*distance.shape, 3, device=length.device, dtype=length.dtype)
+    if curvature == 0.0:
+        points[..., 0] = distance
+        return points, torch.zeros_like(turn_angles)
+
+    num_turns = turn_angles.shape[1]
+    lead_in = torch.minimum(torch.full_like(length, lead_in_distance), 0.25 * length)
+    available = (length - lead_in - lead_out_distance).clamp_min(0.0)
+    gap = torch.minimum(
+        torch.full_like(length, turn_gap_distance), available / (2.0 * max(1, num_turns - 1))
+    )
+    arc_budget = (available - gap * (num_turns - 1)).clamp_min(0.0)
+    total_angle = turn_angles.abs().sum(dim=-1)
+    scale = (curvature * arc_budget / total_angle.clamp_min(torch.finfo(length.dtype).tiny)).clamp(max=1.0)
+    angles = turn_angles * scale.unsqueeze(-1)
+    points[..., 0] = torch.minimum(distance, lead_in.unsqueeze(-1))
+    cursor, heading = lead_in, torch.zeros_like(length)
+    for index in range(num_turns):
+        angle = angles[:, index]
+        arc_length = angle.abs() / curvature
+        arc_distance = torch.minimum((distance - cursor.unsqueeze(-1)).clamp_min(0.0), arc_length.unsqueeze(-1))
+        phase = curvature * arc_distance
+        dx = torch.sin(phase) / curvature
+        # 2*sin(phase/2)^2 avoids cancellation for small turn angles.
+        dy = angle.sign().unsqueeze(-1) * 2.0 * torch.sin(0.5 * phase).square() / curvature
+        cosine, sine = heading.cos().unsqueeze(-1), heading.sin().unsqueeze(-1)
+        points[..., 0] += cosine * dx - sine * dy
+        points[..., 1] += sine * dx + cosine * dy
+        cursor = cursor + arc_length
+        heading = heading + angle
+        if index + 1 < num_turns:
+            straight = torch.minimum((distance - cursor.unsqueeze(-1)).clamp_min(0.0), gap.unsqueeze(-1))
+            points[..., 0] += straight * heading.cos().unsqueeze(-1)
+            points[..., 1] += straight * heading.sin().unsqueeze(-1)
+            cursor = cursor + gap
+    remaining = (distance - cursor.unsqueeze(-1)).clamp_min(0.0)
+    points[..., 0] += remaining * heading.cos().unsqueeze(-1)
+    points[..., 1] += remaining * heading.sin().unsqueeze(-1)
+    return points, angles
+
+
 def perceive_ground_curve(
     points_c: torch.Tensor,
     ground_normal_c: torch.Tensor,
