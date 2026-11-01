@@ -40,7 +40,7 @@ cli_args.add_rsl_rl_args(parser)
 AppLauncher.add_app_launcher_args(parser)
 # parse the arguments
 args_cli, hydra_args = parser.parse_known_args()
-# The Play environment creates RGB base-camera sensors; enable RTX before launching Kit.
+# The Play environment creates tiled RGB base-camera sensors; enable RTX before launching Kit.
 if args_cli.video or (args_cli.task and args_cli.task.split(":")[-1] == "Unitree-b2z1-Velocity-Play"):
     args_cli.enable_cameras = True
 

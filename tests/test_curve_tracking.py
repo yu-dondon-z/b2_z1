@@ -30,6 +30,7 @@ def load_module(name, filename):
 
 
 geometry = load_module("curve_geometry", "curve_geometry.py")
+curriculums = load_module("curve_curriculums", "../curriculums.py")
 
 
 def quat_apply(quat, vector):
@@ -135,6 +136,10 @@ class CameraCfgFixture(ConfigurationFixture):
     OffsetCfg = ConfigurationFixture
 
 
+class TiledCameraCfgFixture(CameraCfgFixture):
+    pass
+
+
 class PinholeCfgFixture:
     @classmethod
     def from_intrinsic_matrix(cls, intrinsic_matrix, **kwargs):
@@ -145,7 +150,7 @@ with patch.dict(
     sys.modules,
     {
         "isaaclab.assets": types.SimpleNamespace(AssetBaseCfg=AssetCfgFixture),
-        "isaaclab.sensors": types.SimpleNamespace(CameraCfg=CameraCfgFixture),
+        "isaaclab.sensors": types.SimpleNamespace(TiledCameraCfg=TiledCameraCfgFixture),
         "isaaclab.sim": types.SimpleNamespace(PinholeCameraCfg=PinholeCfgFixture),
         "isaaclab.utils.math": math_fixture,
     },
@@ -160,6 +165,9 @@ def make_command(count=3, **options):
         heading_control_stiffness=1.5,
         trajectory_num_points=96,
         trajectory_curve_offset_scale=0.1,
+        limit_trajectory_curve_offset_scale=0.1,
+        max_curvature=None,
+        curriculum_enabled=False,
         ground_curve_width=0.04,
         ground_curve_thickness=0.002,
         ground_curve_z_offset=0.002,
@@ -192,6 +200,17 @@ def make_command(count=3, **options):
     return command
 
 
+def analytic_bezier_curvatures(control_points, num_samples=1025):
+    """Evaluate geometric curvature independently from the conservative limiter."""
+    points = control_points.to(torch.float64)
+    t = torch.linspace(0.0, 1.0, num_samples, dtype=points.dtype).view(1, -1, 1)
+    p0, p1, p2, p3 = (points[:, i : i + 1, :2] for i in range(4))
+    velocity = 3.0 * ((1 - t) ** 2 * (p1 - p0) + 2 * (1 - t) * t * (p2 - p1) + t**2 * (p3 - p2))
+    acceleration = 6.0 * ((1 - t) * (p2 - 2 * p1 + p0) + t * (p3 - 2 * p2 + p1))
+    cross = velocity[..., 0] * acceleration[..., 1] - velocity[..., 1] * acceleration[..., 0]
+    return cross / torch.linalg.vector_norm(velocity, dim=-1).pow(3)
+
+
 class GeometryTests(unittest.TestCase):
     def test_bezier_endpoints_and_batch_broadcasting(self):
         points = torch.randn(4, 4, 3)
@@ -200,6 +219,27 @@ class GeometryTests(unittest.TestCase):
         torch.testing.assert_close(sampled[:, 0], points[:, 0])
         torch.testing.assert_close(sampled[:, -1], points[:, -1])
         self.assertEqual(sampled.shape, (4, 3, 3))
+
+    def test_curvature_limit_covers_entire_curve_and_both_turn_directions(self):
+        points = torch.zeros(4, 4, 3, dtype=torch.float64)
+        lengths = torch.tensor([0.6, 2.0, 5.2, 9.0], dtype=torch.float64)
+        points[:, :, 0] = lengths[:, None] * torch.tensor([0.0, 1 / 3, 2 / 3, 1.0])
+        points[:, :, 1] = lengths[:, None] * torch.tensor([0.0, 0.8, -0.8, 0.8])
+        points[1::2, :, 1] *= -1
+        original = points.clone()
+        self.assertTrue((analytic_bezier_curvatures(points).abs().amax(dim=-1) > 0.2).all())
+        limited = geometry.limit_ground_curve_curvature(points, 0.2)
+        self.assertLessEqual(analytic_bezier_curvatures(limited, 4097).abs().max().item(), 0.2 + 1e-7)
+        torch.testing.assert_close(limited[:, :, (0, 2)], points[:, :, (0, 2)])
+        torch.testing.assert_close(limited[:, 0], points[:, 0])
+        torch.testing.assert_close(points, original)
+
+    def test_curvature_limiter_preserves_gentle_curves_and_accepts_zero(self):
+        points = torch.tensor([[[0.0, 0.0, 0.0], [1.0, 0.01, 0.0], [2.0, 0.0, 0.0], [3.0, 0.0, 0.0]]])
+        torch.testing.assert_close(geometry.limit_ground_curve_curvature(points, 0.2), points)
+        straight = geometry.limit_ground_curve_curvature(points, 0.0)
+        torch.testing.assert_close(analytic_bezier_curvatures(straight), torch.zeros(1, 1025, dtype=torch.float64))
+        torch.testing.assert_close(geometry.limit_ground_curve_curvature(straight, 0.0), straight)
 
     def test_parallel_offset_turns_towards_curve(self):
         points = torch.zeros(3, 12, 3)
@@ -282,12 +322,12 @@ class GeometryTests(unittest.TestCase):
 
 
 class CameraConfigurationTests(unittest.TestCase):
-    def test_training_spawns_only_usd_camera_and_play_enables_rgb(self):
+    def test_training_spawns_only_usd_camera_and_play_enables_tiled_rgb(self):
         cfg = make_command(1).cfg
         training = make_curve_camera_cfg(cfg, render=False)
         play = make_curve_camera_cfg(cfg, render=True)
         self.assertIsInstance(training, AssetCfgFixture)
-        self.assertIsInstance(play, CameraCfgFixture)
+        self.assertIs(type(play), TiledCameraCfgFixture)
         self.assertEqual(training.prim_path, "{ENV_REGEX_NS}/Robot/base_link/BaseCamera")
         self.assertEqual(training.prim_path, play.prim_path)
         self.assertEqual(training.spawn.__dict__, play.spawn.__dict__)
@@ -328,6 +368,42 @@ class CameraConfigurationTests(unittest.TestCase):
             offset = camera.offset if render else camera.init_state
             self.assertEqual(offset.pos, cfg.camera_position_b)
 
+    def test_environment_rebuild_preserves_tiled_mode_after_calibration_override(self):
+        class EnvFixture:
+            def __init__(self, cfg, **kwargs):
+                self.cfg = cfg
+                self.num_envs, self.device = cfg.scene.num_envs, "cpu"
+                self.action_manager = types.SimpleNamespace(total_action_dim=18)
+
+        with patch.dict(
+            sys.modules,
+            {
+                "isaaclab.envs": types.SimpleNamespace(ManagerBasedRLEnv=EnvFixture),
+                "isaaclab.sensors": types.SimpleNamespace(CameraCfg=CameraCfgFixture),
+                "b2_z1.tasks.manager_based.b2_z1.mdp.commands.curve_camera": types.SimpleNamespace(
+                    make_curve_camera_cfg=make_curve_camera_cfg
+                ),
+            },
+        ):
+            env_class = load_module(
+                "curve_camera_env_test", COMMANDS.parents[4] / "envs/b2z1_rl_env.py"
+            ).B2Z1ManagerBasedRLEnv
+
+        for render, expected_type in ((False, AssetCfgFixture), (True, TiledCameraCfgFixture)):
+            with self.subTest(render=render):
+                command_cfg = make_command(1).cfg
+                scene_cfg = types.SimpleNamespace(num_envs=4, base_camera=make_curve_camera_cfg(command_cfg, render=render))
+                # Override calibration after the scene config was initially built, as Hydra does.
+                command_cfg.camera_image_size = (800, 600)
+                command_cfg.camera_intrinsics = (400.0, 400.0, 400.0, 300.0)
+                cfg = types.SimpleNamespace(scene=scene_cfg, commands=types.SimpleNamespace(base_velocity=command_cfg))
+                env = env_class(cfg)
+                camera = env.cfg.scene.base_camera
+                self.assertIs(type(camera), expected_type)
+                self.assertEqual(camera.spawn.width, 800)
+                self.assertEqual(camera.spawn.height, 600)
+                self.assertEqual(camera.spawn.intrinsic_matrix, [400.0, 0.0, 400.0, 0.0, 400.0, 300.0, 0.0, 0.0, 1.0])
+
     def test_unsupported_render_calibration_is_rejected(self):
         for intrinsics in ((320.0, 300.0, 320.0, 240.0), (320.0, 320.0, 300.0, 240.0)):
             cfg = make_command(1, camera_intrinsics=intrinsics).cfg
@@ -336,7 +412,141 @@ class CameraConfigurationTests(unittest.TestCase):
                     make_curve_camera_cfg(cfg, render=render)
 
 
+class CurveCurriculumTests(unittest.TestCase):
+    def make_env(self, **options):
+        command = make_command(curriculum_enabled=True, trajectory_curve_offset_scale=0.0, **options)
+        env = command._env
+        env.max_episode_length = 1000
+        env.max_episode_length_s = 20.0
+        env.common_step_counter = 1000
+        env.command_manager = types.SimpleNamespace(get_term=lambda name: command)
+        weights = {"track_lin_vel_xy": 4.5, "track_ang_vel_z": 2.5}
+        env.reward_manager = types.SimpleNamespace(
+            _episode_sums={name: torch.full((3,), 0.9 * weight * 20.0) for name, weight in weights.items()},
+            get_term_cfg=lambda name: types.SimpleNamespace(weight=weights[name]),
+        )
+        return env, command
+
+    def test_promotion_preserves_paths_until_partial_resampling(self):
+        env, command = self.make_env()
+        original = command.curve_points_w.clone()
+        torch.testing.assert_close(original[:, :, 1], torch.zeros(3, 96))
+        level = curriculums.curve_curvature_cmd_levels(env, [0, 1, 2])
+        self.assertAlmostEqual(level.item(), 0.01)
+        torch.testing.assert_close(command.curve_points_w, original)
+        torch.manual_seed(7)
+        command._resample_command([1])
+        self.assertGreater(command.curve_points_w[1, :, 1].abs().max().item(), 0.0)
+        torch.testing.assert_close(command.curve_points_w[[0, 2]], original[[0, 2]])
+        torch.testing.assert_close(command.vel_command_b[:, 0], torch.full((3,), 0.4))
+        self.assertTrue((command.vel_command_b[:, 2].abs() <= 0.8).all())
+
+    def test_requires_both_tracking_rewards_above_threshold(self):
+        for name in ("track_lin_vel_xy", "track_ang_vel_z"):
+            for fraction in (0.0, 0.8, float("nan")):
+                with self.subTest(name=name, fraction=fraction):
+                    env, command = self.make_env()
+                    weight = env.reward_manager.get_term_cfg(name).weight
+                    env.reward_manager._episode_sums[name].fill_(fraction * weight * 20.0)
+                    level = curriculums.curve_curvature_cmd_levels(env, [0, 1, 2])
+                    self.assertEqual(level.item(), 0.0)
+                    self.assertEqual(command.cfg.trajectory_curve_offset_scale, 0.0)
+
+    def test_only_reset_environments_contribute_to_reward(self):
+        env, _ = self.make_env()
+        for sums in env.reward_manager._episode_sums.values():
+            sums[[0, 2]] = 0.0
+        level = curriculums.curve_curvature_cmd_levels(env, torch.tensor([1]))
+        self.assertAlmostEqual(level.item(), 0.01)
+
+    def test_asynchronous_resets_update_at_most_once_per_interval(self):
+        env, _ = self.make_env()
+        for step, expected in ((0, 0.0), (999, 0.0), (1007, 0.01), (1007, 0.01), (2006, 0.01), (2007, 0.02)):
+            env.common_step_counter = step
+            level = curriculums.curve_curvature_cmd_levels(env, [0, 1, 2])
+            self.assertAlmostEqual(level.item(), expected)
+
+    def test_failed_evaluation_waits_an_interval_before_retrying(self):
+        env, _ = self.make_env()
+        sums = env.reward_manager._episode_sums["track_ang_vel_z"]
+        sums.zero_()
+        curriculums.curve_curvature_cmd_levels(env, [0, 1, 2])
+        sums.fill_(0.9 * 2.5 * 20.0)
+        for step, expected in ((1001, 0.0), (2000, 0.01)):
+            env.common_step_counter = step
+            self.assertAlmostEqual(curriculums.curve_curvature_cmd_levels(env, [0, 1, 2]).item(), expected)
+
+    def test_empty_resets_do_not_consume_evaluation_interval(self):
+        env, command = self.make_env()
+        for ids in ([], torch.empty(0, dtype=torch.long), slice(0, 0)):
+            level = curriculums.curve_curvature_cmd_levels(env, ids)
+            self.assertEqual(level.item(), 0.0)
+        self.assertEqual(command._last_curve_curriculum_step, 0)
+        self.assertAlmostEqual(curriculums.curve_curvature_cmd_levels(env, slice(None)).item(), 0.01)
+
+    def test_difficulty_stops_at_configured_limit(self):
+        env, command = self.make_env(limit_trajectory_curve_offset_scale=0.025)
+        for step, expected in ((1000, 0.01), (2000, 0.02), (3000, 0.025), (4000, 0.025)):
+            env.common_step_counter = step
+            self.assertAlmostEqual(curriculums.curve_curvature_cmd_levels(env, None).item(), expected)
+        self.assertEqual(command.cfg.trajectory_curve_offset_scale, 0.025)
+
+    def test_disabled_curriculum_uses_final_difficulty_from_first_sample(self):
+        command = make_command(trajectory_curve_offset_scale=0.0, limit_trajectory_curve_offset_scale=0.15)
+        self.assertEqual(command.cfg.trajectory_curve_offset_scale, 0.15)
+        self.assertGreater(command.curve_points_w[:, :, 1].abs().max().item(), 0.0)
+        env = command._env
+        env.command_manager = types.SimpleNamespace(get_term=lambda name: command)
+        self.assertAlmostEqual(curriculums.curve_curvature_cmd_levels(env, []).item(), 0.15)
+
+    def test_missing_or_nonpositive_reward_does_not_promote(self):
+        for weight in (None, 0.0, -1.0):
+            with self.subTest(weight=weight):
+                env, _ = self.make_env()
+                if weight is None:
+                    del env.reward_manager._episode_sums["track_ang_vel_z"]
+                else:
+                    env.reward_manager.get_term_cfg = lambda name: types.SimpleNamespace(weight=weight)
+                self.assertEqual(curriculums.curve_curvature_cmd_levels(env, [0, 1, 2]).item(), 0.0)
+
+    def test_invalid_curriculum_parameters_are_rejected(self):
+        for options in (
+            {"reward_term_names": ()},
+            {"reward_threshold": 0.0},
+            {"reward_threshold": 1.1},
+            {"offset_scale_step": 0.0},
+            {"offset_scale_step": float("inf")},
+        ):
+            env, _ = self.make_env()
+            with self.subTest(options=options), self.assertRaises(ValueError):
+                curriculums.curve_curvature_cmd_levels(env, [0, 1, 2], **options)
+
+
 class CommandTests(unittest.TestCase):
+    def test_curvature_cap_handles_different_lengths_and_world_poses(self):
+        torch.manual_seed(7)
+        command = make_command(16, max_curvature=0.1)
+        command.time_left = torch.linspace(0.0, 10.0, 16)
+        zeros = torch.zeros(16)
+        command.robot.data.body_quat_w[:, 0] = quat_from_euler_xyz(zeros, zeros, torch.linspace(-2.0, 2.0, 16))
+        command.robot.data.body_pos_w[:, 0, :2] = torch.randn(16, 2) * 3.0
+        command._resample_command(torch.arange(16))
+        curvatures = analytic_bezier_curvatures(command.curve_control_points_w)
+        self.assertTrue(torch.isfinite(curvatures).all())
+        self.assertLessEqual(curvatures.abs().max().item(), 0.1 + 1e-5)
+        torch.testing.assert_close(command.vel_command_b[:, 0], torch.full((16,), 0.4))
+        self.assertTrue((command.vel_command_b[:, 2].abs() <= 0.8).all())
+
+    def test_curvature_cap_preserves_other_environments_on_partial_resampling(self):
+        command = make_command(max_curvature=0.2)
+        original_points = command.curve_points_w.clone()
+        original_controls = command.curve_control_points_w.clone()
+        command.cfg.max_curvature = 0.0
+        command._resample_command([1])
+        torch.testing.assert_close(command.curve_points_w[[0, 2]], original_points[[0, 2]])
+        torch.testing.assert_close(command.curve_control_points_w[[0, 2]], original_controls[[0, 2]])
+        self.assertEqual(analytic_bezier_curvatures(command.curve_control_points_w[1:2]).abs().max().item(), 0.0)
+
     def test_ground_strip_stays_on_world_curve_and_points_along_segments(self):
         command = make_command(2)
         command.ground_curve_visualizer = types.SimpleNamespace()
@@ -432,6 +642,16 @@ class CommandTests(unittest.TestCase):
             {"trajectory_num_points": 2},
             {"camera_depth_range": (0.0, 1.0)},
             {"camera_intrinsics": (0.0, 320.0, 320.0, 240.0)},
+            {"trajectory_curve_offset_scale": -0.01},
+            {"trajectory_curve_offset_scale": 0.2},
+            {"limit_trajectory_curve_offset_scale": -0.1},
+            {"limit_trajectory_curve_offset_scale": float("inf")},
+            {"trajectory_curve_offset_scale": float("nan")},
+            {"max_curvature": -0.1},
+            {"max_curvature": float("nan")},
+            {"max_curvature": float("inf")},
+            {"max_curvature": 2.1},
+            {"max_curvature": 0.2, "ranges": types.SimpleNamespace(ang_vel_z=(-0.04, 0.8))},
         ):
             with self.subTest(options=options), self.assertRaises(ValueError):
                 make_command(**options)

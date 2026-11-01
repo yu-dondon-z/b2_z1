@@ -44,6 +44,43 @@ yaw_rate = clip(heading_control_stiffness * heading_error + forward_speed * curv
 
 前向相机通常看不到机身正下方，横向误差采用最近可见线段的切线向机身方向外推估计。此近似适用于平滑曲线；较急弯道、较远的近端盲区会增加误差。
 
+## 曲率课程
+
+训练默认启用 `curve_curvature_cmd_levels`，沿用 `lin_vel_cmd_levels` 的奖励门槛思路，从直线逐步增加 Bézier 控制点的横向偏移：
+
+- `commands.base_velocity.trajectory_curve_offset_scale=0.0`：初始为直线。
+- `commands.base_velocity.limit_trajectory_curve_offset_scale=0.1`：最终偏移尺度。
+- `curriculum.curve_curvature_cmd_levels.params.offset_scale_step=0.01`：每次达标增加的尺度。
+- `curriculum.curve_curvature_cmd_levels.params.reward_threshold=0.8`：线速度与转向跟踪奖励都必须超过各自权重的 80%。
+
+奖励取本次重置环境的 episode 累积值，除以最大 episode 时长，与原有速度课程一致；提前终止会降低该分数。两次检查至少间隔一个最大 episode 时长（默认 20 s），在间隔结束后的第一次非空重置时检查，因此支持异步重置；未达标时维持当前难度。日志 `Curriculum/curve_curvature_cmd_levels` 记录当前偏移尺度。
+
+偏移尺度是无量纲的弯曲难度参数，不是以 m⁻¹ 表示的曲率上限。实际局部曲率还取决于随机控制点和路径长度，各条路径的曲率不会随等级严格单调增加。升级只影响之后正常重采样的路径，当前世界坐标路径不会立即改变；固定前向速度 `0.4 m/s` 和 yaw 限幅 `(-0.8, 0.8) rad/s` 保持原有设置。
+
+Play 默认设置 `commands.base_velocity.curriculum_enabled=False`，命令初始化时即使用最终尺度 `0.1`，不依赖 episode 结束后再切换。训练时关闭此开关也会直接使用最终尺度；要固定测试直线，将初始尺度和最终尺度都设为 `0.0`。仅移除 curriculum term 会停留在配置的初始尺度。当前检查点沿用原有行为，不保存课程进度，续训会从配置的初始尺度重新开始。
+
+## Play 几何曲率上限
+
+Play 默认设置 `commands.base_velocity.max_curvature=0.2`，单位为 m⁻¹，约束整条目标路径满足 `|κ| <= 0.2`，对应最小转弯半径 `5 m`。在 `forward_speed=0.4 m/s` 时，曲率前馈 `v * κ` 最大为 `0.08 rad/s`，低于当前 yaw 限幅 `0.8 rad/s`，为航向和横向误差纠偏留出余量。这个默认值用于温和弯道；策略的实际跟踪能力仍需通过 Play 验证。
+
+该参数和偏移尺度共同作用：先按最终偏移尺度随机生成控制点，再按几何曲率上限缩小横向偏移。上限是约束，不要求每条曲线都达到该值。训练默认 `max_curvature=None`，保留已有课程行为；设为 `0.0` 时生成直线路径，`None` 关闭几何曲率约束。
+
+局部 Bézier 控制点的 X 等间隔，满足 `x'(t)=L`、`x''(t)=0`，因此整条曲线有保守上界：
+
+```text
+|κ(t)| = |L * y''(t)| / (L² + y'(t)²)^(3/2)
+       <= max(|y''(0)|, |y''(1)|) / L²
+```
+
+采样器根据此解析上界缩小横向偏移，覆盖端点和采样点之间的曲线；实际曲率可能低于配置值。世界坐标系中的平移与旋转不改变曲率。参数必须非负且有限，并满足 `forward_speed * max_curvature <= min(-yaw_min, yaw_max)`；该检查只保证曲率前馈处于双向转向限幅内，完整纠偏指令仍按原有方式限幅。
+
+通过 Hydra 覆盖 Play 上限，例如改为 `0.15 m⁻¹`：
+
+```bash
+python scripts/rsl_rl/play.py --task Unitree-b2z1-Velocity-Play --num_envs 1 \
+    --checkpoint /path/to/model.pt env.commands.base_velocity.max_curvature=0.15
+```
+
 ## 参数
 
 在 `mdp/commands/command_cfg.py` 的 `CurveVelocityCommandCfg` 配置默认值，在环境的 `commands.base_velocity` 覆盖：
@@ -55,7 +92,10 @@ yaw_rate = clip(heading_control_stiffness * heading_error + forward_speed * curv
 | `heading_control_stiffness` | `1.5` | 角度误差到角速度的增益，1/s |
 | `ranges.ang_vel_z` | 环境中 `(-0.8, 0.8)` | yaw 角速度限幅，rad/s |
 | `trajectory_num_points` | `96` | 曲线采样点数 |
-| `trajectory_curve_offset_scale` | `0.1` | 横向控制点偏移占路径长度的比例；设为 `0` 可验证直线 |
+| `trajectory_curve_offset_scale` | 配置类 `0.1`；训练初始 `0.0` | 当前横向控制点偏移占路径长度的比例，由曲率课程递增 |
+| `limit_trajectory_curve_offset_scale` | `0.1` | 最终偏移尺度；关闭课程时直接使用 |
+| `max_curvature` | 训练 `None`，Play `0.2` | 整条路径的绝对几何曲率上限，m⁻¹；`0` 为直线 |
+| `curriculum_enabled` | 训练 `True`，Play `False` | 是否逐级增加曲线弯曲难度 |
 | `resampling_time_range` | 环境中 `(10, 10)` | 独立路径重采样周期，s |
 | `camera_position_b` | `(0.41251, 0.024997, 0.04765)` | B2 前深度相机相对 base 的安装位置，m |
 | `camera_rpy_b` | `(0, 45°, 0)`，以弧度存储 | 相机安装姿态；正 pitch 向下看 |
@@ -81,9 +121,11 @@ yaw_rate = clip(heading_control_stiffness * heading_error + forward_speed * curv
 | 模式 | 场景配置类型 | 相机行为 |
 | --- | --- | --- |
 | 训练 | `AssetBaseCfg` + `PinholeCameraCfg` | 添加实际 USD Camera；不创建 RGB 传感器、render product 或图像 annotator，也不因该相机启用 RTX 传感器渲染 |
-| Play | `CameraCfg` + 同一 `PinholeCameraCfg` | 创建 RGB 传感器；GUI 下显示环境 0 的实际相机图像 |
+| Play | `TiledCameraCfg` + 同一 `PinholeCameraCfg` | 将各环境的 RGB 相机合并到一个 tiled render product；GUI 下显示环境 0 的实际相机图像 |
 
-只把 `CameraCfg.update_period` 设为很大并不能关闭相机渲染，因此训练使用普通 USD 相机配置。训练时由 base 位姿和固定安装外参计算当前相机位姿，直接进行几何投影；两种模式都不读取 RGB 来生成 yaw，策略观测维度不变。
+`TiledCamera` 通过合并多路相机的渲染，减少多环境 Play 中逐相机创建 render product 和读取图像的开销。输出仍通过 `env.scene.sensors["base_camera"].data.output["rgb"]` 读取，形状为 `[num_envs, height, width, 3]`，数据保留在传感器设备上；GUI 仅把环境 0 的图像复制到 CPU 显示。环境初始化时重新同步标定仍会保留 tiled 传感器类型。
+
+只把渲染相机的 `update_period` 设为很大并不能关闭相机渲染，因此训练使用普通 USD 相机配置。训练时由 base 位姿和固定安装外参计算当前相机位姿，直接进行几何投影；两种模式都不读取 RGB 来生成 yaw，策略观测维度不变。此次切换主要优化多环境 RGB 渲染，具体加速比例需在 Isaac Sim 中实测；单环境及不渲染 RGB 的训练不保证提速。
 
 当前版本的 Isaac Lab 渲染相机使用方形像素和居中主点。为了保持渲染与几何投影一致，相机生成器要求 `fx == fy`、`cx == width / 2`、`cy == height / 2`，不支持时会直接报错。
 
@@ -91,7 +133,7 @@ yaw_rate = clip(heading_control_stiffness * heading_error + forward_speed * curv
 # 训练：无需 --enable_cameras。
 python scripts/rsl_rl/train.py --task Unitree-b2z1-Velocity --num_envs 4096 --headless
 
-# Play：脚本会自动启用相机；使用 1 个环境可避免多路 RGB 渲染开销。
+# Play：脚本会自动启用 tiled 相机；可按需增大 --num_envs 批量渲染。
 python scripts/rsl_rl/play.py --task Unitree-b2z1-Velocity-Play --num_envs 1 --checkpoint /path/to/model.pt
 ```
 
@@ -107,7 +149,7 @@ Play 窗口显示的是实际渲染图像，会受到机器人和场景物体遮
 - `lateral_error`、`heading_error`、`curvature`：控制器使用的曲线误差。
 - `heading_target`：世界坐标系下的目标 yaw，rad。
 
-训练和 Play 共用固定速度与曲线 yaw 设置，原有 base 速度范围课程已关闭。固定的是速度指令，实际速度仍由训练得到的策略跟踪。
+训练和 Play 共用固定速度与曲线 yaw 设置，原有 base 速度范围课程已关闭。训练通过曲率课程逐渐增加弯曲难度，Play 使用最终偏移尺度并施加几何曲率上限。固定的是速度指令，实际速度仍由训练得到的策略跟踪。
 
 CPU 数值测试（需要 PyTorch，无需启动 Isaac Sim）：
 
@@ -121,4 +163,4 @@ python -m unittest discover -s tests -p test_amp.py -v
 python -m unittest discover -s tests -p test_rear_arm.py -v
 ```
 
-测试覆盖投影回算、视野筛选、转向符号、曲率、坐标变换、部分环境重采样，以及简化运动学闭环；不代替 Isaac Sim 动力学验证。
+测试覆盖 tiled 相机配置与标定重建、投影回算、视野筛选、转向符号、曲率、全路径几何曲率约束、曲率课程的门槛/异步更新/封顶、坐标变换、部分环境重采样，以及简化运动学闭环；不代替 Isaac Sim 动力学和渲染性能验证。

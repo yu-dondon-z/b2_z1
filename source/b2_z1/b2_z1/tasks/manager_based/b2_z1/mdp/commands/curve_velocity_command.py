@@ -21,7 +21,7 @@ from isaaclab.utils.math import (
     yaw_quat,
 )
 
-from .curve_geometry import cubic_bezier, curve_tracking_errors, perceive_ground_curve
+from .curve_geometry import cubic_bezier, curve_tracking_errors, limit_ground_curve_curvature, perceive_ground_curve
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
@@ -53,8 +53,18 @@ class CurveVelocityCommand(UniformVelocityCommand):
             raise ValueError("Camera focal lengths and image dimensions must be positive.")
         if cfg.ranges.ang_vel_z[0] >= 0.0 or cfg.ranges.ang_vel_z[1] <= 0.0:
             raise ValueError("Yaw-rate limits must allow both left and right turns.")
+        if not 0.0 <= cfg.trajectory_curve_offset_scale <= cfg.limit_trajectory_curve_offset_scale < float("inf"):
+            raise ValueError("Curve offset scales must satisfy 0 <= initial <= limit < infinity.")
+        if cfg.max_curvature is not None:
+            if not 0.0 <= cfg.max_curvature < float("inf"):
+                raise ValueError("max_curvature must be nonnegative and finite, or None.")
+            if cfg.forward_speed * cfg.max_curvature > min(-cfg.ranges.ang_vel_z[0], cfg.ranges.ang_vel_z[1]):
+                raise ValueError("forward_speed * max_curvature must fit within both yaw-rate limits.")
+        if not cfg.curriculum_enabled:
+            cfg.trajectory_curve_offset_scale = cfg.limit_trajectory_curve_offset_scale
         super().__init__(cfg, env)
 
+        self._last_curve_curriculum_step = 0
         self.base_idx = self.robot.find_bodies(cfg.base_name)[0][0]
         self.curve_control_points_w = torch.zeros(self.num_envs, 4, 3, device=self.device)
         self.curve_points_w = torch.zeros(self.num_envs, cfg.trajectory_num_points, 3, device=self.device)
@@ -81,6 +91,7 @@ class CurveVelocityCommand(UniformVelocityCommand):
         return (
             f"CurveVelocityCommand: speed={self.cfg.forward_speed} m/s, "
             f"yaw limits={self.cfg.ranges.ang_vel_z} rad/s, "
+            f"max curvature={self.cfg.max_curvature} 1/m, "
             f"lookahead={self.cfg.lookahead_distance} m, ideal camera projection"
         )
 
@@ -107,6 +118,8 @@ class CurveVelocityCommand(UniformVelocityCommand):
         )
         offsets = 2.0 * torch.rand(count, 3, device=self.device) - 1.0
         local_points[:, 1:, 1] = offsets * self.cfg.trajectory_curve_offset_scale * length.unsqueeze(-1)
+        if self.cfg.max_curvature is not None:
+            local_points = limit_ground_curve_curvature(local_points, self.cfg.max_curvature)
         world_points = quat_apply(rotation.unsqueeze(1).expand(-1, 4, -1), local_points) + base_pos.unsqueeze(1)
         world_points[:, :, 2] = self._ground_height_w[env_ids].unsqueeze(-1)
         self.curve_control_points_w[env_ids] = world_points

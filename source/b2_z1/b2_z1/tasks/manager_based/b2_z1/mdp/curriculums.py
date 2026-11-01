@@ -154,6 +154,57 @@ def lin_vel_cmd_levels(
     return torch.tensor(ranges.lin_vel_x[1], device=env.device)
 
 
+def curve_curvature_cmd_levels(
+    env: ManagerBasedRLEnv,
+    env_ids: Sequence[int] | slice | None,
+    reward_term_names: tuple[str, ...] = ("track_lin_vel_xy", "track_ang_vel_z"),
+    reward_threshold: float = 0.8,
+    offset_scale_step: float = 0.01,
+) -> torch.Tensor:
+    """Increase Bezier bending difficulty when all velocity tracking rewards pass.
+
+    Like lin_vel_cmd_levels, compare episode reward per second with a fraction
+    of its configured weight. The offset scale controls curvature indirectly;
+    it is dimensionless, not a maximum geometric curvature in 1/m. New levels
+    take effect at normal command resampling, leaving existing world paths fixed.
+    """
+    if not reward_term_names or not 0.0 < reward_threshold <= 1.0:
+        raise ValueError("Specify tracking reward terms and a reward_threshold in (0, 1].")
+    if not 0.0 < offset_scale_step < float("inf"):
+        raise ValueError("offset_scale_step must be positive and finite.")
+
+    command = env.command_manager.get_term("base_velocity")
+    cfg = command.cfg
+    limit = cfg.limit_trajectory_curve_offset_scale
+    if not cfg.curriculum_enabled:
+        cfg.trajectory_curve_offset_scale = limit
+        return torch.tensor(limit, device=env.device)
+
+    scale = cfg.trajectory_curve_offset_scale
+    # Resets are asynchronous: check the first reset after an episode interval,
+    # rather than requiring one at an exact global-step multiple.
+    if scale >= limit or env.common_step_counter - command._last_curve_curriculum_step < env.max_episode_length:
+        return torch.tensor(scale, device=env.device)
+    if env_ids is None:
+        env_ids = slice(None)
+    count = len(range(*env_ids.indices(env.num_envs))) if isinstance(env_ids, slice) else len(env_ids)
+    if count == 0:
+        return torch.tensor(scale, device=env.device)
+
+    command._last_curve_curriculum_step = env.common_step_counter
+    for name in reward_term_names:
+        reward_sums = env.reward_manager._episode_sums.get(name)
+        if reward_sums is None or reward_sums[env_ids].numel() == 0:
+            return torch.tensor(scale, device=env.device)
+        weight = env.reward_manager.get_term_cfg(name).weight
+        reward = reward_sums[env_ids].mean() / env.max_episode_length_s
+        if weight <= 0.0 or not reward > weight * reward_threshold:
+            return torch.tensor(scale, device=env.device)
+
+    cfg.trajectory_curve_offset_scale = min(scale + offset_scale_step, limit)
+    return torch.tensor(cfg.trajectory_curve_offset_scale, device=env.device)
+
+
 def pos_cmd_levels(
     env,
     env_ids: Sequence[int],

@@ -18,7 +18,7 @@ from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils import configclass
-from isaaclab.sensors import CameraCfg, ContactSensorCfg, RayCasterCfg, patterns
+from isaaclab.sensors import ContactSensorCfg, RayCasterCfg, TiledCameraCfg, patterns
 
 from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
@@ -68,8 +68,8 @@ class B2Z1SceneCfg(InteractiveSceneCfg):
     contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=3, 
                                       track_air_time=True, debug_vis=False)
 
-    # Populated from commands.base_velocity calibration: USD prim in training, RGB sensor in Play.
-    base_camera: AssetBaseCfg | CameraCfg | None = None
+    # Populated from commands.base_velocity calibration: USD prim in training, tiled RGB sensor in Play.
+    base_camera: AssetBaseCfg | TiledCameraCfg | None = None
     
     
 
@@ -270,6 +270,8 @@ class CommandsCfg:
         resampling_time_range=(10.0, 10.0),
         forward_speed=0.4,
         lookahead_distance=0.6,
+        trajectory_curve_offset_scale=0.0,
+        limit_trajectory_curve_offset_scale=0.1,
         debug_vis=False,
         ranges=mdp.command_cfg.UniformVelocityCommandCfg.Ranges(
             lin_vel_x=(0.4, 0.4),
@@ -384,9 +386,14 @@ class CurriculumCfg:
 
     # lin_vel_cmd_levels = CurrTerm(mdp.lin_vel_cmd_levels)
     
-    # Base commands come from fixed-speed curve following, without velocity-range curricula.
+    # Fixed-speed commands; increase curve bending instead of velocity ranges.
     lin_vel_cmd_levels = None
     ang_vel_cmd_levels = None
+
+    curve_curvature_cmd_levels = CurrTerm(
+        func=mdp.curve_curvature_cmd_levels,
+        params={"reward_threshold": 0.8, "offset_scale_step": 0.01},
+    )
     # pos_cmd_levels = CurrTerm(func=mdp.pos_cmd_levels)  # type: ignore
     
 
@@ -439,7 +446,7 @@ class B2Z1EnvCfg(ManagerBasedRLEnvCfg):
         self.scene.contact_forces.update_period = self.sim.dt
         self.scene.base_camera = make_curve_camera_cfg(self.commands.base_velocity, render=False)
         
-        self.commands.base_velocity.curriculum_enabled = False
+        self.commands.base_velocity.curriculum_enabled = True
         self.commands.ee_target.curriculum_enabled = True
         # self.commands.ee_target.curriculum_enabled = False
         
@@ -452,7 +459,15 @@ class B2Z1PlayEnvCfg(B2Z1EnvCfg):
         super().__post_init__()
         self.scene.num_envs = 32
         self.reference_state_initialization = False
+        
+        
+        
+        self.commands.base_velocity.curriculum_enabled = False
+        # Radius >= 5 m; at 0.4 m/s, curvature feedforward uses at most 0.08 rad/s.
+        self.commands.base_velocity.max_curvature = 1.5
         self.commands.base_velocity.debug_vis = True
+        
+        
         self.scene.base_camera = make_curve_camera_cfg(self.commands.base_velocity, render=True)
         
         # Same rear-facing link00 sampling frame as training.
@@ -460,3 +475,5 @@ class B2Z1PlayEnvCfg(B2Z1EnvCfg):
         self.commands.ee_target.limit_ranges.pos_y = (-0.0, 0.0)
         self.commands.ee_target.limit_ranges.pos_z = (0.2, 0.2)
         self.commands.ee_target.ranges = self.commands.ee_target.limit_ranges
+
+        self.terminations.base_contact = None

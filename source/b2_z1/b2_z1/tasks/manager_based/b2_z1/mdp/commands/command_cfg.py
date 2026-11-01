@@ -106,7 +106,18 @@ class CurveVelocityCommandCfg(UniformVelocityCommandCfg):
     rel_standing_envs: float = 0.0
     trajectory_num_points: int = 96
     trajectory_curve_offset_scale: float = 0.1
-    """Maximum lateral control-point offset as a fraction of the curve length."""
+    """Current lateral control-point offset limit as a fraction of the curve length.
+
+    With curriculum_enabled, this is the initial bending difficulty, not a bound on curvature in 1/m.
+    """
+    limit_trajectory_curve_offset_scale: float = 0.1
+    """Final bending difficulty; used immediately when curriculum_enabled is False."""
+    max_curvature: float | None = None
+    """Absolute geometric curvature limit (1/m) over the whole ground path.
+
+    None disables the limit; zero generates straight paths. The sampler reduces
+    lateral offsets using a conservative analytic bound, so paths may be gentler.
+    """
     ground_height: float = 0.0
     """Ground plane height relative to each environment origin."""
     ground_curve_width: float = 0.04

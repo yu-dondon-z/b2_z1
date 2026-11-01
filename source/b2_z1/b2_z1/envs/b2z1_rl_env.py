@@ -19,6 +19,7 @@ class B2Z1ManagerBasedRLEnv(ManagerBasedRLEnv):
         # always use the same calibration, including late resolution or mount changes.
         camera_cfg = getattr(cfg.scene, "base_camera", None)
         if camera_cfg is not None:
+            # TiledCameraCfg inherits CameraCfg; preserve rendering mode after CLI overrides.
             cfg.scene.base_camera = make_curve_camera_cfg(
                 cfg.commands.base_velocity, render=isinstance(camera_cfg, CameraCfg)
             )

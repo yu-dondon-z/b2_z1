@@ -25,6 +25,30 @@ def cubic_bezier(
     )
 
 
+def limit_ground_curve_curvature(control_points: torch.Tensor, max_curvature: float) -> torch.Tensor:
+    """Bound the whole local ground Bezier curve's absolute curvature in 1/m.
+
+    The four control points must have equally spaced, increasing x coordinates
+    and constant z, as in CurveVelocityCommand's sampler. Then x'(t) = length
+    and x''(t) = 0, so |curvature| <= |y''(t)| / length**2. Since y'' is linear,
+    its largest absolute value occurs at an endpoint. Scaling all lateral
+    offsets by this conservative bound guarantees the limit for every t in [0, 1].
+    """
+    length = control_points[:, -1, 0] - control_points[:, 0, 0]
+    second_difference = control_points[:, 2:, 1] - 2.0 * control_points[:, 1:-1, 1] + control_points[:, :-2, 1]
+    curvature_bound = 6.0 * second_difference.abs().amax(dim=-1) / length.square()
+    # Leave straight curves unchanged, including when max_curvature is zero.
+    scale = torch.where(
+        curvature_bound > 0.0,
+        (max_curvature / curvature_bound.clamp_min(torch.finfo(control_points.dtype).tiny)).clamp(max=1.0),
+        1.0,
+    )
+    limited = control_points.clone()
+    lateral_start = control_points[:, :1, 1]
+    limited[:, :, 1] = lateral_start + scale.unsqueeze(-1) * (control_points[:, :, 1] - lateral_start)
+    return limited
+
+
 def perceive_ground_curve(
     points_c: torch.Tensor,
     ground_normal_c: torch.Tensor,

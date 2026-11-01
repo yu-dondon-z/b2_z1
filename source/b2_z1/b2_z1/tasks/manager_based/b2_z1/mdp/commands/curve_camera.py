@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 import torch
 from isaaclab.assets import AssetBaseCfg
-from isaaclab.sensors import CameraCfg
+from isaaclab.sensors import TiledCameraCfg
 from isaaclab.sim import PinholeCameraCfg
 from isaaclab.utils.math import (
     convert_camera_frame_orientation_convention,
@@ -22,12 +22,13 @@ if TYPE_CHECKING:
     from .command_cfg import CurveVelocityCommandCfg
 
 
-def make_curve_camera_cfg(cfg: CurveVelocityCommandCfg, *, render: bool) -> AssetBaseCfg | CameraCfg:
-    """Spawn a USD Camera for training, or a rendering sensor for Play.
+def make_curve_camera_cfg(cfg: CurveVelocityCommandCfg, *, render: bool) -> AssetBaseCfg | TiledCameraCfg:
+    """Spawn a USD Camera for training, or a tiled rendering sensor for Play.
 
-    Creating CameraCfg's sensor instance enables RTX even with an infinite update
+    Creating a rendering sensor instance enables RTX even with an infinite update
     period. A plain AssetBaseCfg spawns the same camera prim without a render
     product or image annotators. Both branches share the command's calibration.
+    Play batches the environment cameras into one tiled render product.
     """
     width, height = cfg.camera_image_size
     fx, fy, cx, cy = cfg.camera_intrinsics
@@ -50,14 +51,14 @@ def make_curve_camera_cfg(cfg: CurveVelocityCommandCfg, *, render: bool) -> Asse
     rpy = torch.tensor(cfg.camera_rpy_b, dtype=torch.float32).unsqueeze(0)
     rotation_world = quat_from_euler_xyz(*rpy.unbind(dim=-1))
     if render:
-        return CameraCfg(
+        return TiledCameraCfg(
             prim_path=prim_path,
             update_period=cfg.camera_update_period,
             width=width,
             height=height,
             data_types=["rgb"],
             spawn=spawn,
-            offset=CameraCfg.OffsetCfg(
+            offset=TiledCameraCfg.OffsetCfg(
                 pos=cfg.camera_position_b,
                 rot=tuple(rotation_world[0].tolist()),
                 convention="world",
