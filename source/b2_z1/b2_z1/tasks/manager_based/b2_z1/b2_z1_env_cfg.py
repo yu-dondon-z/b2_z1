@@ -25,7 +25,7 @@ from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
 from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
 
 from . import mdp
-from .mdp.commands.curve_camera import make_curve_camera_cfg
+from .mdp.commands.curve_camera import make_curve_camera_cfg, make_rear_camera_cfg
 
 ##
 # Pre-defined configs
@@ -70,6 +70,8 @@ class B2Z1SceneCfg(InteractiveSceneCfg):
 
     # Populated from commands.base_velocity calibration: USD prim in training, tiled RGB sensor in Play.
     base_camera: AssetBaseCfg | TiledCameraCfg | None = None
+    # Rear EE camera uses commands.ee_target calibration and the same rendering modes.
+    rear_camera: AssetBaseCfg | TiledCameraCfg | None = None
     
     
 
@@ -472,6 +474,7 @@ class B2Z1EnvCfg(ManagerBasedRLEnvCfg):
         # we tick all the sensors based on the smallest update period (physics update period)
         self.scene.contact_forces.update_period = self.sim.dt
         self.scene.base_camera = make_curve_camera_cfg(self.commands.base_velocity, render=False)
+        self.scene.rear_camera = make_rear_camera_cfg(self.commands.ee_target, render=False)
         
         self.commands.base_velocity.curriculum_enabled = True
         self.commands.ee_target.curriculum_enabled = True
@@ -501,7 +504,9 @@ class B2Z1PlayEnvCfg(B2Z1EnvCfg):
         
         
         self.scene.base_camera = make_curve_camera_cfg(self.commands.base_velocity, render=True)
+        self.scene.rear_camera = make_rear_camera_cfg(self.commands.ee_target, render=True)
         
         self.commands.ee_target.curriculum_enabled = False
+        self.commands.ee_target.debug_vis = True
 
         self.terminations.base_contact = None

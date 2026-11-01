@@ -18,10 +18,12 @@ from test_curve_tracking import (
     COMMANDS,
     curriculums,
     geometry,
+    make_rear_camera_cfg,
     quat_apply,
     quat_apply_inverse,
     quat_from_euler_xyz,
     quat_mul,
+    rear_camera_command_cfg,
 )
 
 PACKAGE = COMMANDS.parents[4]
@@ -114,6 +116,39 @@ def make_command(curriculum_enabled=True, **options):
 
 
 class RearArmTests(unittest.TestCase):
+    def test_rear_camera_covers_full_ee_workspace_and_curves_with_base_motion(self):
+        command = make_command(curriculum_enabled=False, trajectory_curve_offset_scale=0.1)
+        command._resample_command(torch.arange(3))
+        camera_cfg = rear_camera_command_cfg()
+        camera = make_rear_camera_cfg(camera_cfg, render=True)
+        # Match the actual URDF mount rather than an arbitrary virtual viewpoint.
+        rear_mount = URDF.find("joint[@name='joint_r_dc']/origin")
+        self.assertEqual(camera.offset.pos, tuple(float(value) for value in rear_mount.get("xyz").split()))
+        limits = command.cfg.limit_ranges
+        corners_b = torch.cartesian_prod(
+            *(torch.tensor(getattr(limits, axis)) for axis in ("pos_x", "pos_y", "pos_z"))
+        )
+        base_pos = command.robot.data.body_pos_w[:, 0]
+        base_quat = command.robot.data.body_state_w[:, 0, 3:7]
+        corner_quats = base_quat[:, None].expand(-1, corners_b.shape[0], -1)
+        corners_w = base_pos[:, None] + quat_apply(corner_quats, corners_b.expand(3, -1, -1))
+        curves_w = command._evaluate_curve(torch.linspace(0, 1, 41).view(1, -1, 1))
+        points_w = torch.cat((corners_w, curves_w, command.robot.data.body_pos_w[:, 2:3]), dim=1)
+        camera_pos = base_pos + quat_apply(base_quat, torch.tensor(camera.offset.pos).expand(3, -1))
+        camera_quat = quat_mul(base_quat, torch.tensor(camera.offset.rot).expand(3, -1))
+        points_c = quat_apply_inverse(
+            camera_quat[:, None].expand(-1, points_w.shape[1], -1), points_w - camera_pos[:, None]
+        )
+        depth = points_c[..., 0]
+        fx, fy, cx, cy = camera_cfg.camera_intrinsics
+        pixels = torch.stack((cx - fx * points_c[..., 1] / depth, cy - fy * points_c[..., 2] / depth), dim=-1)
+        self.assertTrue((depth >= camera_cfg.camera_depth_range[0]).all())
+        self.assertTrue((depth <= camera_cfg.camera_depth_range[1]).all())
+        # Leave space for the visible goal and trajectory markers at the image edges.
+        self.assertTrue((pixels >= 16).all())
+        self.assertTrue((pixels <= torch.tensor(camera_cfg.camera_image_size) - 16).all())
+        torch.testing.assert_close(pixels[:, :8], pixels[0:1, :8].expand(3, -1, -1), atol=1e-3, rtol=1e-5)
+
     def test_default_posture_points_backwards_within_joint_limits(self):
         tree = ast.parse((PACKAGE / "assets/unitree.py").read_text())
         config = next(node.value for node in tree.body if isinstance(node, ast.Assign)

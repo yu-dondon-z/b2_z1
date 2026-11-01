@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Build the physical camera from the same calibration used by curve projection."""
+"""Build the base-mounted cameras from their command configurations."""
 
 from __future__ import annotations
 
@@ -19,10 +19,22 @@ from isaaclab.utils.math import (
 )
 
 if TYPE_CHECKING:
-    from .command_cfg import CurveVelocityCommandCfg
+    from .command_cfg import CurveVelocityCommandCfg, UniformPoseWBCCommandCfg
 
 
 def make_curve_camera_cfg(cfg: CurveVelocityCommandCfg, *, render: bool) -> AssetBaseCfg | TiledCameraCfg:
+    """Build the forward camera with the ground-curve projection calibration."""
+    return _make_camera_cfg(cfg, prim_name="BaseCamera", render=render)
+
+
+def make_rear_camera_cfg(cfg: UniformPoseWBCCommandCfg, *, render: bool) -> AssetBaseCfg | TiledCameraCfg:
+    """Build the rear camera observing the base-relative EE workspace."""
+    return _make_camera_cfg(cfg, prim_name="RearCamera", render=render)
+
+
+def _make_camera_cfg(
+    cfg: CurveVelocityCommandCfg | UniformPoseWBCCommandCfg, *, prim_name: str, render: bool
+) -> AssetBaseCfg | TiledCameraCfg:
     """Spawn a USD Camera for training, or a tiled rendering sensor for Play.
 
     Creating a rendering sensor instance enables RTX even with an infinite update
@@ -37,11 +49,11 @@ def make_curve_camera_cfg(cfg: CurveVelocityCommandCfg, *, render: bool) -> Asse
     # Match the pinhole renderer in the installed Isaac Lab / Isaac Sim version.
     # It ignores aperture offsets and uses square pixels when reporting intrinsics.
     if abs(fx - fy) > 1.0e-4 or abs(cx - width / 2) > 1.0e-4 or abs(cy - height / 2) > 1.0e-4:
-        raise ValueError("Rendered curve cameras require fx == fy and principal point (width/2, height/2).")
+        raise ValueError("Rendered cameras require fx == fy and principal point (width/2, height/2).")
     if cfg.camera_update_period <= 0:
         raise ValueError("camera_update_period must be positive.")
 
-    prim_path = f"{{ENV_REGEX_NS}}/Robot/{cfg.base_name}/BaseCamera"
+    prim_path = f"{{ENV_REGEX_NS}}/Robot/{cfg.base_name}/{prim_name}"
     spawn = PinholeCameraCfg.from_intrinsic_matrix(
         [fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0],
         width=width,

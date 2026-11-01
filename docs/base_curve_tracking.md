@@ -160,16 +160,33 @@ python scripts/rsl_rl/play.py --task Unitree-b2z1-Velocity-Play --num_envs 1 \
 
 ## 训练与 Play 的实际相机
 
-场景中的 `base_camera` 安装在 `{ENV_REGEX_NS}/Robot/base_link/BaseCamera`。相机生成与几何控制共用 `commands.base_velocity.camera_*` 参数，环境初始化时会在 Hydra/命令行覆盖后重新同步相机配置。
+场景包含前向地面相机和后向 EE 相机，均固定安装在 `base_link` 下：
+
+| 场景名称 | USD 路径 | 标定参数 | 用途 |
+| --- | --- | --- | --- |
+| `base_camera` | `{ENV_REGEX_NS}/Robot/base_link/BaseCamera` | `commands.base_velocity.camera_*` | 观察前方地面曲线，与几何控制共用标定 |
+| `rear_camera` | `{ENV_REGEX_NS}/Robot/base_link/RearCamera` | `commands.ee_target.camera_*` | 观察后方 EE 目标、插值曲线与实际末端轨迹 |
+
+后向安装位置沿用 URDF 的 `joint_r_dc`：`(-0.4081, -0.025, 0.024861) m`；安装 RPY 为 `(0, pi/4, pi)`，即朝 base 负 X 方向并向下看 45°。默认 `640 × 480`、内参 `(320, 320, 320, 240)`、深度范围 `(0.05, 5.0) m`，RGB 更新周期 `0.1 s`。几何视野覆盖当前完整 EE `limit_ranges`、默认末端起点和插值曲线；实际画面仍受机器人与场景遮挡影响。两台相机都跟随 base 的完整位姿，环境初始化时会在 Hydra/命令行覆盖后重新同步配置。
 
 | 模式 | 场景配置类型 | 相机行为 |
 | --- | --- | --- |
 | 训练 | `AssetBaseCfg` + `PinholeCameraCfg` | 添加实际 USD Camera；不创建 RGB 传感器、render product 或图像 annotator，也不因该相机启用 RTX 传感器渲染 |
-| Play | `TiledCameraCfg` + 同一 `PinholeCameraCfg` | 将各环境的 RGB 相机合并到一个 tiled render product；GUI 下显示环境 0 的实际相机图像 |
+| Play | `TiledCameraCfg` + 同一 `PinholeCameraCfg` | 每个相机组分别将各环境的 RGB 相机合并到一个 tiled render product；GUI 下分别显示环境 0 的前向和后向图像 |
 
 `TiledCamera` 通过合并多路相机的渲染，减少多环境 Play 中逐相机创建 render product 和读取图像的开销。输出仍通过 `env.scene.sensors["base_camera"].data.output["rgb"]` 读取，形状为 `[num_envs, height, width, 3]`，数据保留在传感器设备上；GUI 仅把环境 0 的图像复制到 CPU 显示。环境初始化时重新同步标定仍会保留 tiled 传感器类型。
 
-只把渲染相机的 `update_period` 设为很大并不能关闭相机渲染，因此训练使用普通 USD 相机配置。训练时由 base 位姿和固定安装外参计算当前相机位姿，直接进行几何投影；两种模式都不读取 RGB 来生成 yaw，策略观测维度不变。此次切换主要优化多环境 RGB 渲染，具体加速比例需在 Isaac Sim 中实测；单环境及不渲染 RGB 的训练不保证提速。
+后向图像使用 `env.scene.sensors["rear_camera"].data.output["rgb"]`，格式相同。Play 自动打开 `Rear camera (EE target) — environment 0` 窗口，并启用 `ee_target.debug_vis` 显示目标和轨迹。两台相机的分辨率、内参、安装位姿及更新周期可分别配置；例如降低后向图像开销：
+
+```bash
+python scripts/rsl_rl/play.py --task Unitree-b2z1-Velocity-Play --num_envs 1 \
+    --checkpoint /path/to/model.pt \
+    'env.commands.ee_target.camera_image_size=[320,240]' \
+    'env.commands.ee_target.camera_intrinsics=[160,160,160,120]' \
+    env.commands.ee_target.camera_update_period=0.2
+```
+
+只把渲染相机的 `update_period` 设为很大并不能关闭相机渲染，因此训练时两台相机都使用普通 USD 相机配置。训练时由 base 位姿和固定安装外参计算当前前向相机位姿，直接进行几何投影；两种模式都不读取 RGB 来生成指令，策略观测维度不变。TiledCamera 主要优化多环境 RGB 渲染，具体加速比例需在 Isaac Sim 中实测；增加后向相机仍会增加 Play 的渲染开销。
 
 当前版本的 Isaac Lab 渲染相机使用方形像素和居中主点。为了保持渲染与几何投影一致，相机生成器要求 `fx == fy`、`cx == width / 2`、`cy == height / 2`，不支持时会直接报错。
 

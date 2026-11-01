@@ -70,6 +70,19 @@ class UniformPoseWBCCommandCfg(UniformPoseCommandBaseCfg):
     """Minimum distance in meters between two recorded end-effector trajectory markers."""
     trajectory_curve_offset_scale: float = 0.1
     """Relative scale of the random Bezier control-point offsets used to bend the interpolated trajectory."""
+
+    # B2 joint_r_dc rear-camera mount from b2_z1_gun.urdf.
+    camera_position_b: tuple[float, float, float] = (-0.4081, -0.025, 0.024861)
+    camera_rpy_b: tuple[float, float, float] = (0.0, math.radians(45.0), math.pi)
+    """Rear camera RPY (rad), using x-forward/y-left/z-up axes; looks rearward and down."""
+    camera_intrinsics: tuple[float, float, float, float] = (320.0, 320.0, 320.0, 240.0)
+    """Ideal pinhole (fx, fy, cx, cy) in pixels."""
+    camera_image_size: tuple[int, int] = (640, 480)
+    camera_depth_range: tuple[float, float] = (0.05, 5.0)
+    """Visible forward depth range (m) in the rear camera frame."""
+    camera_update_period: float = 0.1
+    """Rear RGB sensor update period (s) in Play."""
+
     tracking_pose_visualizer_cfg = _build_tracking_pose_visualizer_cfg()
     interpolation_curve_visualizer_cfg = _build_interpolation_curve_visualizer_cfg()
     tracked_trajectory_visualizer_cfg = _build_tracked_trajectory_visualizer_cfg()

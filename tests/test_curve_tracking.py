@@ -9,6 +9,7 @@ Isaac Lab's simulator imports are replaced with small fixtures. These tests exec
 the production geometry and command methods but do not exercise PhysX or rendering.
 """
 
+import ast
 import importlib.util
 import math
 import sys
@@ -155,7 +156,26 @@ with patch.dict(
         "isaaclab.utils.math": math_fixture,
     },
 ):
-    make_curve_camera_cfg = load_module("curve_camera", "curve_camera.py").make_curve_camera_cfg
+    camera_builders = load_module("curve_camera", "curve_camera.py")
+    make_curve_camera_cfg = camera_builders.make_curve_camera_cfg
+    make_rear_camera_cfg = camera_builders.make_rear_camera_cfg
+
+
+def rear_camera_command_cfg():
+    """Read the production EE camera defaults without importing the simulator."""
+    tree = ast.parse((COMMANDS / "command_cfg.py").read_text())
+    config = next(
+        node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "UniformPoseWBCCommandCfg"
+    )
+    values = {
+        node.target.id: eval(
+            compile(ast.Expression(node.value), "<rear camera>", "eval"), {"math": math, "__builtins__": {}}
+        )
+        for node in config.body
+        if isinstance(node, ast.AnnAssign)
+        and (node.target.id == "base_name" or node.target.id.startswith("camera_"))
+    }
+    return types.SimpleNamespace(**values)
 
 
 def make_command(count=3, **options):
@@ -405,6 +425,29 @@ class GeometryTests(unittest.TestCase):
 
 
 class CameraConfigurationTests(unittest.TestCase):
+    def test_rear_camera_has_distinct_prim_and_looks_backwards_and_down(self):
+        cfg = rear_camera_command_cfg()
+        front = make_curve_camera_cfg(make_command(1).cfg, render=True)
+        for render in (False, True):
+            with self.subTest(render=render):
+                rear = make_rear_camera_cfg(cfg, render=render)
+                self.assertIs(type(rear), TiledCameraCfgFixture if render else AssetCfgFixture)
+                self.assertEqual(rear.prim_path, "{ENV_REGEX_NS}/Robot/base_link/RearCamera")
+                self.assertNotEqual(rear.prim_path, front.prim_path)
+                mount = rear.offset if render else rear.init_state
+                self.assertEqual(mount.pos, cfg.camera_position_b)
+                optical_forward = torch.tensor([[1.0, 0.0, 0.0]] if render else [[0.0, 0.0, -1.0]])
+                direction = quat_apply(torch.tensor([mount.rot]), optical_forward)
+                torch.testing.assert_close(
+                    direction, torch.tensor([[-math.sqrt(0.5), 0.0, -math.sqrt(0.5)]]), atol=1e-6, rtol=1e-6
+                )
+                self.assertEqual(rear.spawn.width, 640)
+                self.assertEqual(rear.spawn.height, 480)
+                self.assertEqual(rear.spawn.clipping_range, cfg.camera_depth_range)
+                if render:
+                    self.assertEqual(rear.data_types, ["rgb"])
+                    self.assertEqual(rear.update_period, 0.1)
+
     def test_training_spawns_only_usd_camera_and_play_enables_tiled_rgb(self):
         cfg = make_command(1).cfg
         training = make_curve_camera_cfg(cfg, render=False)
@@ -464,7 +507,7 @@ class CameraConfigurationTests(unittest.TestCase):
                 "isaaclab.envs": types.SimpleNamespace(ManagerBasedRLEnv=EnvFixture),
                 "isaaclab.sensors": types.SimpleNamespace(CameraCfg=CameraCfgFixture),
                 "b2_z1.tasks.manager_based.b2_z1.mdp.commands.curve_camera": types.SimpleNamespace(
-                    make_curve_camera_cfg=make_curve_camera_cfg
+                    make_curve_camera_cfg=make_curve_camera_cfg, make_rear_camera_cfg=make_rear_camera_cfg
                 ),
             },
         ):
@@ -475,17 +518,42 @@ class CameraConfigurationTests(unittest.TestCase):
         for render, expected_type in ((False, AssetCfgFixture), (True, TiledCameraCfgFixture)):
             with self.subTest(render=render):
                 command_cfg = make_command(1).cfg
-                scene_cfg = types.SimpleNamespace(num_envs=4, base_camera=make_curve_camera_cfg(command_cfg, render=render))
+                rear_cfg = rear_camera_command_cfg()
+                scene_cfg = types.SimpleNamespace(
+                    num_envs=4,
+                    base_camera=make_curve_camera_cfg(command_cfg, render=render),
+                    rear_camera=make_rear_camera_cfg(rear_cfg, render=render),
+                )
                 # Override calibration after the scene config was initially built, as Hydra does.
                 command_cfg.camera_image_size = (800, 600)
                 command_cfg.camera_intrinsics = (400.0, 400.0, 400.0, 300.0)
-                cfg = types.SimpleNamespace(scene=scene_cfg, commands=types.SimpleNamespace(base_velocity=command_cfg))
+                rear_cfg.camera_position_b = (-0.4, -0.03, 0.1)
+                rear_cfg.camera_image_size = (320, 240)
+                rear_cfg.camera_intrinsics = (160.0, 160.0, 160.0, 120.0)
+                rear_cfg.camera_update_period = 0.2
+                cfg = types.SimpleNamespace(
+                    scene=scene_cfg, commands=types.SimpleNamespace(base_velocity=command_cfg, ee_target=rear_cfg)
+                )
                 env = env_class(cfg)
                 camera = env.cfg.scene.base_camera
                 self.assertIs(type(camera), expected_type)
                 self.assertEqual(camera.spawn.width, 800)
                 self.assertEqual(camera.spawn.height, 600)
                 self.assertEqual(camera.spawn.intrinsic_matrix, [400.0, 0.0, 400.0, 0.0, 400.0, 300.0, 0.0, 0.0, 1.0])
+                rear = env.cfg.scene.rear_camera
+                self.assertIs(type(rear), expected_type)
+                self.assertEqual(rear.spawn.width, 320)
+                self.assertEqual(rear.spawn.height, 240)
+                self.assertEqual(rear.spawn.intrinsic_matrix, [160.0, 0.0, 160.0, 0.0, 160.0, 120.0, 0.0, 0.0, 1.0])
+                self.assertEqual((rear.offset if render else rear.init_state).pos, rear_cfg.camera_position_b)
+                if render:
+                    self.assertEqual(rear.update_period, 0.2)
+
+        # Setting a scene camera to None must still disable its reconstruction.
+        scene_cfg.base_camera = scene_cfg.rear_camera = None
+        env = env_class(cfg)
+        self.assertIsNone(env.cfg.scene.base_camera)
+        self.assertIsNone(env.cfg.scene.rear_camera)
 
     def test_unsupported_render_calibration_is_rejected(self):
         for intrinsics in ((320.0, 300.0, 320.0, 240.0), (320.0, 320.0, 300.0, 240.0)):

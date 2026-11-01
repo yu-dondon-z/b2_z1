@@ -40,7 +40,7 @@ cli_args.add_rsl_rl_args(parser)
 AppLauncher.add_app_launcher_args(parser)
 # parse the arguments
 args_cli, hydra_args = parser.parse_known_args()
-# The Play environment creates tiled RGB base-camera sensors; enable RTX before launching Kit.
+# The Play environment creates tiled RGB front and rear cameras; enable RTX before launching Kit.
 if args_cli.video or (args_cli.task and args_cli.task.split(":")[-1] == "Unitree-b2z1-Velocity-Play"):
     args_cli.enable_cameras = True
 
@@ -165,20 +165,23 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     dt = env.unwrapped.step_dt
 
-    # Show environment 0's real camera image in an Isaac Sim window. RGB is not a policy input.
-    base_camera = env.unwrapped.scene.sensors.get("base_camera")
-    camera_window = None
-    camera_provider = None
-    camera_elapsed = 0.0
-    if base_camera is not None and env.unwrapped.sim.has_gui():
+    # Show environment 0's front and rear RGB images. RGB is not a policy input.
+    camera_views = []
+    if env.unwrapped.sim.has_gui():
         import omni.ui as ui
 
-        camera_provider = ui.ByteImageProvider()
-        camera_window = ui.Window(
-            "Base camera — environment 0", width=base_camera.cfg.width, height=base_camera.cfg.height + 30
-        )
-        with camera_window.frame:
-            ui.ImageWithProvider(camera_provider)
+        for sensor_name, title in (
+            ("base_camera", "Base camera — environment 0"),
+            ("rear_camera", "Rear camera (EE target) — environment 0"),
+        ):
+            camera = env.unwrapped.scene.sensors.get(sensor_name)
+            if camera is None:
+                continue
+            provider = ui.ByteImageProvider()
+            window = ui.Window(title, width=camera.cfg.width, height=camera.cfg.height + 30)
+            with window.frame:
+                ui.ImageWithProvider(provider)
+            camera_views.append({"camera": camera, "window": window, "provider": provider, "elapsed": 0.0})
 
     # reset environment
     obs, _ = env.get_observations()
@@ -192,17 +195,16 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             actions = policy(obs)
             # env stepping
             obs, _, _, _ = env.step(actions)
-            camera_elapsed += dt
-            if (
-                camera_provider is not None
-                and camera_window.visible
-                and camera_elapsed + 1.0e-9 >= base_camera.cfg.update_period
-            ):
-                camera_elapsed = 0.0
-                rgb = base_camera.data.output["rgb"][0, ..., :3]
+            for view in camera_views:
+                camera = view["camera"]
+                view["elapsed"] += dt
+                if not view["window"].visible or view["elapsed"] + 1.0e-9 < camera.cfg.update_period:
+                    continue
+                view["elapsed"] = 0.0
+                rgb = camera.data.output["rgb"][0, ..., :3]
                 rgba = torch.cat((rgb, torch.full_like(rgb[..., :1], 255)), dim=-1)
-                camera_provider.set_bytes_data(
-                    rgba.cpu().numpy().flatten().data, [base_camera.cfg.width, base_camera.cfg.height]
+                view["provider"].set_bytes_data(
+                    rgba.cpu().numpy().flatten().data, [camera.cfg.width, camera.cfg.height]
                 )
         if args_cli.video:
             timestep += 1
@@ -216,8 +218,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             time.sleep(sleep_time)
 
     # close the simulator
-    if camera_window is not None:
-        camera_window.visible = False
+    for view in camera_views:
+        view["window"].visible = False
     env.close()
 
 
