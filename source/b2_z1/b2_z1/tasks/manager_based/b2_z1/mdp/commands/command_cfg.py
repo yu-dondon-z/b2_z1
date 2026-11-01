@@ -58,13 +58,11 @@ class UniformPoseWBCCommandCfg(UniformPoseCommandBaseCfg):
     """The initial range"""
     limit_ranges: UniformPoseCommandBaseCfg.Ranges = None  # type: ignore
     """The range limit """
-    link_name: str = "link00"
-    """Sampling frame for target XY and orientation; +X points rearward on the rear-mounted Z1.
-
-    Target Z is a world-frame height. Commands returned to the policy are in base_name's frame.
-    """
     base_name: str = "base_link"
-    """The name of the robot base body used as the output command frame."""
+    """Robot body used for sampling XYZ/RPY, storing curves, and outputting commands.
+
+    All positions, including Z, are relative to this body's origin and full orientation.
+    """
     curriculum_enabled: bool = False
     trajectory_num_points: int = 20
     """Number of points used to visualize the interpolation curve and tracked path."""

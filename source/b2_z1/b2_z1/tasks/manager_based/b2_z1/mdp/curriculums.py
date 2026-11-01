@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import torch
 from collections.abc import Sequence
+from copy import deepcopy
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -207,70 +208,49 @@ def curve_curvature_cmd_levels(
 
 
 def pos_cmd_levels(
-    env,
-    env_ids: Sequence[int],
+    env: ManagerBasedRLEnv,
+    env_ids: Sequence[int] | slice | None,
     reward_term_name: str = "end_effector_position_tracking_exp",
+    position_step: float = 0.01,
+    orientation_step: float = 0.0,
+    reward_threshold: float = 0.8,
 ) -> torch.Tensor:
-    cfg = env.command_manager.get_term("ee_target").cfg
+    """Expand base-frame EE sampling ranges when curve position tracking passes.
 
-    is_curriculum_enabled = getattr(
-        cfg, "curriculum_enabled", getattr(cfg, "currirulum_enabled", False)
-    )
+    Check at most once per episode interval, including asynchronous resets.
+    Position and optional orientation ranges are clamped to their configured limits.
+    """
+    if not 0.0 < position_step < float("inf") or not 0.0 <= orientation_step < float("inf"):
+        raise ValueError("position_step must be positive and orientation_step nonnegative; both must be finite.")
+    if not 0.0 < reward_threshold <= 1.0:
+        raise ValueError("reward_threshold must lie in (0, 1].")
+    command = env.command_manager.get_term("ee_target")
+    cfg = command.cfg
     ranges = getattr(cfg, "ranges", None)
     limit_ranges = getattr(cfg, "limit_ranges", None)
-    force_range = getattr(cfg, "force_range", None)
-    limit_force_range = getattr(cfg, "limit_force_range", None)
-
-    # --- Handle disabled curriculum ---
-    if not is_curriculum_enabled:
-        if ranges is not None and limit_ranges is not None:
-            cfg.ranges = limit_ranges
-        val = (
-            limit_ranges.pos_x[1]
-            if limit_ranges and hasattr(limit_ranges, "pos_x")
-            else 0.0
-        )
-        return torch.tensor(-1.0, device=env.device)
-
-    if ranges is None or not hasattr(ranges, "pos_x"):
+    if ranges is None or limit_ranges is None:
         return torch.tensor(0.0, device=env.device)
-
-    # --- Performance: only compute at episode end ---
-    if (
-        env.common_step_counter > 0
-        and env.common_step_counter % (env.max_episode_length) == 0
-        
-    ):
-        reward_sums = env.reward_manager._episode_sums.get(reward_term_name)
-        if reward_sums is not None:
-            reward = torch.mean(reward_sums[env_ids]) / env.max_episode_length_s
-            reward_term_cfg = env.reward_manager.get_term_cfg(reward_term_name)
-
-            if reward > reward_term_cfg.weight * 0.8:
-                pos_delta = torch.tensor([-0.05, 0.05], device=env.device)
-                ori_delta = torch.tensor([-3.14 / 18, 3.14 / 18], device=env.device)
-                force_delta = torch.tensor([-5.0, 5.0], device=env.device)
-
-                # Update position ranges
-                if limit_ranges is not None:
-                    for axis in ["pos_x", "pos_y", "pos_z"]:
-                        _safe_update_range(
-                            ranges, limit_ranges, axis, pos_delta, env.device
-                        )
-                    for axis in ["roll", "pitch", "yaw"]:
-                        _safe_update_range(
-                            ranges, limit_ranges, axis, ori_delta, env.device
-                        )
-
-                # Update force ranges
-                if force_range is not None and limit_force_range is not None:
-                    for axis in ["lin_force_x", "lin_force_y", "lin_force_z"]:
-                        _safe_update_range(
-                            force_range,
-                            limit_force_range,
-                            axis,
-                            force_delta,
-                            env.device,
-                        )
-
+    if not cfg.curriculum_enabled:
+        cfg.ranges = deepcopy(limit_ranges)
+        return torch.tensor(cfg.ranges.pos_x[1], device=env.device)
+    if env.common_step_counter - command._last_pos_curriculum_step < env.max_episode_length:
+        return torch.tensor(ranges.pos_x[1], device=env.device)
+    if env_ids is None:
+        env_ids = slice(None)
+    count = len(range(*env_ids.indices(env.num_envs))) if isinstance(env_ids, slice) else len(env_ids)
+    if count == 0:
+        return torch.tensor(ranges.pos_x[1], device=env.device)
+    command._last_pos_curriculum_step = env.common_step_counter
+    reward_sums = env.reward_manager._episode_sums.get(reward_term_name)
+    if reward_sums is not None:
+        reward = reward_sums[env_ids].mean() / env.max_episode_length_s
+        weight = env.reward_manager.get_term_cfg(reward_term_name).weight
+        if weight > 0.0 and reward > weight * reward_threshold:
+            delta = torch.tensor([-position_step, position_step], device=env.device)
+            for axis in ("pos_x", "pos_y", "pos_z"):
+                _safe_update_range(ranges, limit_ranges, axis, delta, env.device)
+            if orientation_step > 0.0:
+                delta = torch.tensor([-orientation_step, orientation_step], device=env.device)
+                for axis in ("roll", "pitch", "yaw"):
+                    _safe_update_range(ranges, limit_ranges, axis, delta, env.device)
     return torch.tensor(ranges.pos_x[1], device=env.device)

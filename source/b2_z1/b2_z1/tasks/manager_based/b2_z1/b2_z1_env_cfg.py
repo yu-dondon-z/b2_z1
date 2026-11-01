@@ -295,27 +295,25 @@ class CommandsCfg:
     ee_target = mdp.command_cfg.UniformPoseWBCCommandCfg(
         asset_name="robot",
         body_name="dummy_target",
-        link_name="link00",
         base_name="base_link",
         resampling_time_range=(8.0, 10.0),
         debug_vis=True,
-        # XY and RPY are sampled in the rear-facing arm mount frame, not base_link.
-        # Keep +X here: joint0 rotates it to -X in the robot base. Z is world height.
+        # All XYZ/RPY values are in base_link. The rear-mounted arm works at negative X.
         ranges=mdp.command_cfg.UniformPoseWBCCommandCfg.Ranges(
-            pos_x=(1.0, 1.0),
-            pos_y=(0.0, 0.0),
-            pos_z=(0.2, 0.2),
+            pos_x=(-1.03, -1.01),
+            pos_y=(-0.02, 0.02),
+            pos_z=(-0.31, -0.29),
             roll=(0.0, 0.0),
-            pitch=(math.pi / 2, math.pi / 2),
-            yaw=(0.0, 0.0),
+            pitch=(math.pi / 2 - 0.45, math.pi / 2 - 0.45),
+            yaw=(math.pi, math.pi),
         ),
         limit_ranges=mdp.command_cfg.UniformPoseWBCCommandCfg.Ranges(
-            pos_x=(1.0, 1.0),
-            pos_y=(0.0, 0.0),
-            pos_z=(0.2, 0.2),
+            pos_x=(-1.08, -0.96),
+            pos_y=(-0.15, 0.15),
+            pos_z=(-0.34, -0.26),
             roll=(0.0, 0.0),
-            pitch=(math.pi / 2, math.pi / 2),
-            yaw=(0.0, 0.0),
+            pitch=(math.pi / 2 - 0.45, math.pi / 2 - 0.45),
+            yaw=(math.pi, math.pi),
         ),
     )
 
@@ -333,6 +331,22 @@ class RewardsCfg:
         func=mdp.track_ang_vel_z_exp, weight=2.5,
         params={"command_name": "base_velocity", "std": math.sqrt(0.25)},
     )
+    
+    
+    end_effector_position_tracking_exp = RewTerm(
+        func=mdp.position_command_error_exp, weight=5.0,
+        params={
+            "command_name": "ee_target", "std": 0.1,
+            "asset_cfg": SceneEntityCfg("robot", body_names="dummy_target"),
+            "base_name": "base_link",
+        },
+    )
+    end_effector_orientation_error = RewTerm(
+        func=mdp.orientation_command_error, weight=-0.2,
+        params={"command_name": "ee_target", "asset_cfg": SceneEntityCfg("robot", body_names="dummy_target")},
+    )
+    
+    
     ee_stability = RewTerm(
         func=mdp.link_stability, weight=-0.2,
         params={"asset_cfg": SceneEntityCfg("robot", body_names="dummy_target"), "link_name": "link_gun"},
@@ -341,10 +355,16 @@ class RewardsCfg:
     base_angular_velocity = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.5)
     # AMP learns base height/orientation, leg posture, swing height, contact timing,
     # and foot pairing. Hand-written targets for these quantities fight the prior.
+    
     arm_deviation = RewTerm(
-        func=mdp.joint_deviation_l1, weight=-2.5,
+        func=mdp.joint_deviation_l1, 
+        # weight=-2.5,
+        weight=-0.1,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=[f"joint{i}" for i in range(1, 7)])},
     )
+    
+    
+    
     feet_slide = RewTerm(
         func=mdp.feet_slide, weight=-1.0,
         params={
@@ -398,7 +418,10 @@ class CurriculumCfg:
         func=mdp.curve_curvature_cmd_levels,
         params={"reward_threshold": 0.8, "offset_scale_step": 0.01},
     )
-    # pos_cmd_levels = CurrTerm(func=mdp.pos_cmd_levels)  # type: ignore
+    pos_cmd_levels = CurrTerm(
+        func=mdp.pos_cmd_levels,
+        params={"position_step": 0.01, "orientation_step": 0.0, "reward_threshold": 0.8},
+    )
     
 
 ##
@@ -473,15 +496,12 @@ class B2Z1PlayEnvCfg(B2Z1EnvCfg):
         # self.commands.base_velocity.turn_angle_range = (maximum_angle, maximum_angle)
         # # Hard cap; nominal turn_curvature is 1.0 1/m (radius 1 m).
         # self.commands.base_velocity.max_curvature = 1.5
+        
         self.commands.base_velocity.debug_vis = True
         
         
         self.scene.base_camera = make_curve_camera_cfg(self.commands.base_velocity, render=True)
         
-        # Same rear-facing link00 sampling frame as training.
-        self.commands.ee_target.limit_ranges.pos_x = (1.0, 1.0)
-        self.commands.ee_target.limit_ranges.pos_y = (-0.0, 0.0)
-        self.commands.ee_target.limit_ranges.pos_z = (0.2, 0.2)
-        self.commands.ee_target.ranges = self.commands.ee_target.limit_ranges
+        self.commands.ee_target.curriculum_enabled = False
 
         self.terminations.base_contact = None
