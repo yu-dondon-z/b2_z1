@@ -79,3 +79,5 @@ outputs/
 test/
 
 *.zip
+# Vendor source model required to reproduce the Huibo asset and regression checks.
+!/source/b2_z1/b2_z1/assets/b2_z1/huibo_description_right_hand.zip

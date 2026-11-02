@@ -876,6 +876,29 @@ class AMPVA15CurriculumRunnerCfg(AMPVA14FromScratchRunnerCfg):
 
 
 @configclass
+class AMPVA16DualVisionRunnerCfg(AMPVA15CurriculumRunnerCfg):
+    """VA15-compatible fixed-speed continuation with isolated run naming."""
+
+    run_name = "VA16_dual_vision"
+
+
+@configclass
+class AMPB2HuiboDualVisionRunnerCfg(AMPVA14FromScratchRunnerCfg):
+    """Fresh 19-action actor; reuse only the B2 leg-motion discriminator."""
+
+    experiment_name = "b2_huibo_amp"
+    run_name = "huibo_fixed020_from_scratch"
+    resume = False
+
+    def __post_init__(self):
+        super().__post_init__()
+        # Uniform bounds do not assume that the seven arm joints occupy
+        # the final action rows; PhysX resolves articulation joint order.
+        self.amp_cfg.min_normalized_std = [0.01] * 19
+        self.amp_cfg.max_policy_std = [0.65] * 19
+
+
+@configclass
 class AMPVB1LoadedGunRunnerCfg(AMPVA15CurriculumRunnerCfg):
     """Conservative VA15 continuation under episode-wise randomized hose load."""
 

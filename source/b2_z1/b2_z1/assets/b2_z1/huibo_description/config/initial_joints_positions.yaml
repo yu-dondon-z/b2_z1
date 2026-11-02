@@ -1,0 +1,25 @@
+# Default initial positions for hb's ros2_control fake system
+
+initial_positions:
+  body_joint1: 0
+  body_joint2: 0
+  body_joint3: 0
+  body_joint4: 0
+  left_joint1: 0
+  left_joint2: 0
+  left_joint3: 0
+  left_joint4: 0
+  left_joint5: 0
+  left_joint6: 0
+  left_joint7: 0
+  right_joint1: 0
+  right_joint2: 0
+  right_joint3: 0
+  right_joint4: 0
+  right_joint5: 0
+  right_joint6: 0
+  right_joint7: 0
+  left_gf1_joint: 0
+  left_gf2_joint: 0
+  right_gf1_joint: 0
+  right_gf2_joint: 0

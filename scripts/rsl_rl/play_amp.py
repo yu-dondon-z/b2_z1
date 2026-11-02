@@ -36,6 +36,10 @@ parser.add_argument(
 parser.add_argument("--num_envs", type=int, default=None, help="Number of environments to simulate.")
 parser.add_argument("--max-steps", type=int, default=None, help="Stop playback after this many policy steps.")
 parser.add_argument(
+    "--policy-export-dir", type=str, default=None,
+    help="Optional destination for exported JIT/ONNX policy; defaults to the checkpoint's exported folder.",
+)
+parser.add_argument(
     "--motion-trace-csv", type=str, default=None,
     help="Write one-environment base, TCP target/actual and Z1 joint motion to CSV for diagnosis.",
 )
@@ -215,17 +219,20 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     ):
         action_term = env.unwrapped.action_manager.get_term("JointPositionAction")
         joint_names = action_term._joint_names
-        expected_arm_joints = [f"joint{index}" for index in range(1, 7)]
+        expected_arm_joints = list(getattr(
+            env.unwrapped.cfg.commands.ee_target, "arm_joint_names",
+            tuple(f"joint{index}" for index in range(1, 7)),
+        ))
         if any(joint not in joint_names for joint in expected_arm_joints):
             raise RuntimeError(
-                f"Cannot identify Z1 actions in resolved joint order: {joint_names}"
+                f"Cannot identify arm actions in resolved joint order: {joint_names}"
             )
         arm_action_indices = [joint_names.index(joint) for joint in expected_arm_joints]
         arm_joint_indices, _ = env.unwrapped.scene["robot"].find_joints(
             expected_arm_joints, preserve_order=True
         )
         print(
-            "[INFO] Z1 action filter indices: "
+            "[INFO] Arm action filter indices: "
             f"{arm_action_indices} ({', '.join(expected_arm_joints)})"
         )
 
@@ -239,7 +246,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         policy_nn = ppo_runner.alg.actor_critic
 
     # export policy to onnx/jit
-    export_model_dir = os.path.join(os.path.dirname(resume_path), "exported")
+    export_model_dir = args_cli.policy_export_dir or os.path.join(os.path.dirname(resume_path), "exported")
     export_policy_as_jit(policy_nn, ppo_runner.obs_normalizer, path=export_model_dir, filename="policy.pt")
     export_policy_as_onnx(
         policy_nn, normalizer=ppo_runner.obs_normalizer, path=export_model_dir, filename="policy.onnx"
@@ -249,6 +256,11 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # reset environment
     obs, _ = env.get_observations()
+    if (hasattr(env.unwrapped.cfg.commands.ee_target, "front_camera_name")
+            and env.unwrapped.sim.has_gui()):
+        # Camera following must remain available with the optional field-
+        # of-view overlay disabled. The environment UI has now been built.
+        env.unwrapped.viewport_camera_controller.update_view_to_asset_root("robot")
     timestep = 0
     arm_action_state = None
     previous_raw_actions = None
@@ -266,6 +278,24 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         if arm_action_indices is not None or args_cli.motion_trace_csv else None
     )
     motion_trace = []
+    trace_dual_vision = bool(args_cli.motion_trace_csv and path_command is not None
+                             and hasattr(path_command.cfg, "front_camera_name"))
+    trace_foot_names = ("FL", "FR", "RL", "RR")
+    trace_foot_mapping = []
+    trace_foot_sensor = None
+    if trace_dual_vision:
+        trace_robot = env.unwrapped.scene["robot"]
+        trace_foot_sensor = env.unwrapped.scene.sensors["contact_forces"]
+        for label in trace_foot_names:
+            body_name = f"{label}_foot"
+            body_ids, body_names = trace_robot.find_bodies(body_name, preserve_order=True)
+            sensor_ids, sensor_names = trace_foot_sensor.find_bodies(body_name, preserve_order=True)
+            if body_names != [body_name] or sensor_names != [body_name]:
+                raise RuntimeError(f"VA16 foot trace cannot uniquely map {body_name}: "
+                                   f"robot={body_names}, sensor={sensor_names}")
+            trace_foot_mapping.append((body_ids[0], sensor_ids[0]))
+        print(f"[INFO] VA16 named foot trace mappings (robot, contact): "
+              f"{dict(zip(trace_foot_names, trace_foot_mapping))}")
     trace_gun_contact = bool(getattr(env.unwrapped.cfg, 'vb10_contact_diagnostics', False))
     trace_termination_names = list(env.unwrapped.termination_manager.active_terms) if args_cli.motion_trace_csv else []
     if args_cli.motion_trace_csv and hasattr(env.unwrapped, "hose_force_w"):
@@ -345,6 +375,15 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                         ]
                     else:
                         hose_diagnostics = [None, None, None, None, None]
+                    dual_diagnostics = []
+                    if trace_dual_vision:
+                        dual_diagnostics = [int(path_command._vision_valid[0].item()),
+                            int(path_command._vision_generation),
+                            robot.data.root_lin_vel_b[0, 0].item(), robot.data.root_lin_vel_b[0, 1].item()]
+                        for body_id, sensor_id in trace_foot_mapping:
+                            dual_diagnostics.extend(robot.data.body_pos_w[0, body_id].tolist())
+                            dual_diagnostics.append(torch.linalg.vector_norm(
+                                trace_foot_sensor.data.net_forces_w[0, sensor_id]).item())
                     motion_trace.append(
                         [timestep * dt, *base.tolist(), *base_quat.tolist(), *target.tolist(), *actual.tolist(),
                          *command.tolist(), *robot.data.joint_pos[0, arm_joint_indices].tolist(),
@@ -362,7 +401,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                          loaded_env._trace_terminal_tilt_deg[0].item() if hasattr(loaded_env, "_trace_terminal_tilt_deg") and dones[0] else None,
                          *([torch.linalg.vector_norm(loaded_env.gun_contact_force_w[0]).item(),
                             loaded_env.gun_contact_force_w[0,2].item(),
-                            loaded_env.gun_bottom_clearance_m[0].item()] if trace_gun_contact else [])]
+                            loaded_env.gun_bottom_clearance_m[0].item()] if trace_gun_contact else []),
+                         *dual_diagnostics]
                     )
             reset_mask = dones.to(dtype=torch.bool).reshape(-1)
             if torch.any(reset_mask):
@@ -409,8 +449,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             torch.linalg.norm(elbow_column) * torch.linalg.norm(wrist_column)
         ).clamp_min(1.0e-8)
         print(
-            "[INFO] Z1 Jacobian: "
-            f"joint3/joint4 column cosine={column_cosine.item():.3f}, "
+            "[INFO] Arm Jacobian: "
+            f"{expected_arm_joints[2]}/{expected_arm_joints[3]} column cosine={column_cosine.item():.3f}, "
             f"singular values={[round(value, 4) for value in torch.linalg.svdvals(jacobian).tolist()]}"
         )
         os.makedirs(os.path.dirname(os.path.abspath(args_cli.motion_trace_csv)), exist_ok=True)
@@ -420,13 +460,16 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 ["time_s", "base_x", "base_y", "base_z", "base_qw", "base_qx", "base_qy", "base_qz",
                  "target_x", "target_y", "target_z",
                  "actual_x", "actual_y", "actual_z", "command_x_b", "command_y_b", "command_z_b",
-                 *[f"joint{index}" for index in range(1, 7)],
+                 *expected_arm_joints,
                  "command_vx_b", "command_vy_b", "command_yaw_rate_b", "actual_yaw_rate_b",
                  "path_lateral_error_b", "path_heading_error_b",
                  "hose_mass_kg", "hose_force_n", "hose_torque_nm", "hose_tension_n", "hose_tension_raw_n",
                  "reset", "body_tilt_deg", *[f"termination_{name}" for name in trace_termination_names],
                  "terminal_base_height_m", "terminal_tilt_deg",
-                 *(['gun_contact_force_n','gun_vertical_contact_force_n','gun_bottom_clearance_m'] if trace_gun_contact else [])]
+                 *(['gun_contact_force_n','gun_vertical_contact_force_n','gun_bottom_clearance_m'] if trace_gun_contact else []),
+                 *(["visual_target_active", "capture_generation", "base_vx_actual", "base_vy_actual",
+                     *[f"foot_{label}_{field}" for label in trace_foot_names
+                       for field in ("x_w", "y_w", "z_w", "contact_force_n")]] if trace_dual_vision else [])]
             )
             writer.writerows(motion_trace)
         print(f"[INFO] Wrote motion trace: {args_cli.motion_trace_csv}")

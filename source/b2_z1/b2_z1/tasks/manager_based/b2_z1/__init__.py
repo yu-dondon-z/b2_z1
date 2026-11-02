@@ -1755,6 +1755,66 @@ gym.register(
 )
 
 gym.register(
+    id="Unitree-b2z1-AMP-VA16-DualVision",
+    entry_point="b2_z1.envs:B2Z1ManagerAMPBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": (
+            f"{__name__}.b2_z1_va16_dual_vision_env_cfg:B2Z1VA16DualVisionAMPEnvCfg"
+        ),
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_amp_cfg:AMPVA16DualVisionRunnerCfg",
+    },
+)
+
+gym.register(
+    id="Unitree-b2z1-AMP-VA16-DualVision-Play",
+    entry_point="b2_z1.envs:B2Z1ManagerAMPBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": (
+            f"{__name__}.b2_z1_va16_dual_vision_env_cfg:B2Z1VA16DualVisionAMPEnvCfg_Play"
+        ),
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_amp_cfg:AMPVA16DualVisionRunnerCfg",
+    },
+)
+
+gym.register(
+    id="Unitree-b2z1-AMP-VA16-DualVision-Visual-Train",
+    entry_point="b2_z1.envs:B2Z1ManagerAMPBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": (
+            f"{__name__}.b2_z1_va16_dual_vision_env_cfg:B2Z1VA16DualVisionAMPEnvCfg_VisualTrain"
+        ),
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_amp_cfg:AMPVA16DualVisionRunnerCfg",
+    },
+)
+
+gym.register(
+    id="Unitree-b2huibo-AMP-DualVision",
+    entry_point="b2_z1.envs:B2Z1ManagerAMPBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": (
+            f"{__name__}.b2_huibo_dual_vision_env_cfg:B2HuiboDualVisionAMPEnvCfg"
+        ),
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_amp_cfg:AMPB2HuiboDualVisionRunnerCfg",
+    },
+)
+
+gym.register(
+    id="Unitree-b2huibo-AMP-DualVision-Play",
+    entry_point="b2_z1.envs:B2Z1ManagerAMPBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": (
+            f"{__name__}.b2_huibo_dual_vision_env_cfg:B2HuiboDualVisionAMPEnvCfg_Play"
+        ),
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_amp_cfg:AMPB2HuiboDualVisionRunnerCfg",
+    },
+)
+
+gym.register(
     id="Unitree-b2z1-AMP-VA15-Loaded-Gun-Vision-Play",
     entry_point="b2_z1.envs:B2Z1LoadedGunAMPEnv",
     disable_env_checker=True,

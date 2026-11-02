@@ -85,8 +85,14 @@ class RearVisionTrajectoryCommand(UniformPoseWBCCommand):
         self._file_settle_elapsed = 0.0
         self._file_arm_joint_ids = None
         if cfg.file_standby_before_motion:
-            self._file_arm_joint_ids = self.robot.find_joints(
-                [f"joint{i}" for i in range(1, 7)], preserve_order=True)[0]
+            arm_names = tuple(getattr(cfg, "arm_joint_names", tuple(f"joint{i}" for i in range(1, 7))))
+            if (not arm_names or any(not isinstance(name, str) or not name for name in arm_names)
+                    or len(set(arm_names)) != len(arm_names)):
+                raise ValueError("standby arm_joint_names must contain nonempty, unique names")
+            self._file_arm_joint_ids, resolved_names = self.robot.find_joints(
+                list(arm_names), preserve_order=True)
+            if tuple(resolved_names) != arm_names:
+                raise ValueError(f"standby arm joints differ from configured encoder order: {resolved_names}")
         self._command_transition_start_velocity_b = torch.zeros(
             self.num_envs, 3, device=self.device
         )
