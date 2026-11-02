@@ -492,13 +492,13 @@ class B2Z1PlayEnvCfg(B2Z1EnvCfg):
         
         
         
-        # self.commands.base_velocity.curriculum_enabled = False
-        # maximum_turns = self.commands.base_velocity.turn_count_range[1]
-        # self.commands.base_velocity.turn_count_range = (maximum_turns, maximum_turns)
-        # maximum_angle = self.commands.base_velocity.turn_angle_range[1]
-        # self.commands.base_velocity.turn_angle_range = (maximum_angle, maximum_angle)
-        # # Hard cap; nominal turn_curvature is 1.0 1/m (radius 1 m).
-        # self.commands.base_velocity.max_curvature = 1.5
+        self.commands.base_velocity.curriculum_enabled = False
+        maximum_turns = self.commands.base_velocity.turn_count_range[1]
+        self.commands.base_velocity.turn_count_range = (maximum_turns, maximum_turns)
+        maximum_angle = self.commands.base_velocity.turn_angle_range[1]
+        self.commands.base_velocity.turn_angle_range = (maximum_angle, maximum_angle)
+        # Hard cap; nominal turn_curvature is 1.0 1/m (radius 1 m).
+        self.commands.base_velocity.max_curvature = 1.5
         
         self.commands.base_velocity.debug_vis = True
         
