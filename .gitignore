@@ -73,7 +73,10 @@ tests/
 /tests/*
 !/tests/test_curve_tracking.py
 !/tests/test_amp.py
+!/tests/test_vd2_curriculum_state.py
 !/tests/test_rear_arm.py
+!/tests/test_vd3_*.py
+!/tests/test_vd5_*.py
 
 # Docker history
 .isaac-lab-docker-history

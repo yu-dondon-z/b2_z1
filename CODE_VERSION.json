@@ -1,0 +1,23 @@
+{
+  "version": "VD5",
+  "revision": "world_seam_ground_curriculum_v1",
+  "description": "VD5 world-seam geometry commands with standing-start adaptation and 1000-iteration continuation; older tasks retained",
+  "canonical_workspace": "/home/dong/b2_z1_VD2",
+  "experiment_name": "b2_z1_vd5_startup_amp",
+  "base_commit": "b64b0faf8b4db3a9c1c2e05235521f61ab4dc47d",
+  "source_changes_committed": true,
+  "snapshot_registry": ".code_versions/versions_20261105.json",
+  "code_versions": {
+    "support_mirror": "code-versions/vd3-support-mirror-20261105",
+    "curve_play": "code-versions/vd3-curve-play-20261105"
+  },
+  "layout_note": "All code versions, historical runs and diagnostics are stored in this workspace. The original VD3 worktree was archived and removed on 2026-11-05; current training source was preserved.",
+  "variant": "Startup (80% reference / 20% standing initialization)",
+  "task_id": "Unitree-b2z1-VD5-Startup-Velocity",
+  "github_repository": "https://github.com/yu-dondon-z/b2_z1",
+  "github_branch": "VD5",
+  "snapshot_date": "2026-11-10",
+  "checkpoint": "test_ckpt/b2_z1_vd5_startup_amp/2026-11-10_11-47-57_vd5_startup_80ref_20stand_continue1000/model_4498.pt",
+  "checkpoint_sha256": "9af8e2ca67382d3186bb9ea145930c25797b06e6189963bb1d996fee91f3fedf",
+  "evaluation_report": "docs/VD5_TASK_TRACKING_REVIEW_20261110.md"
+}

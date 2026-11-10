@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import statistics
+import tempfile
 import time
 import torch
 from copy import deepcopy
@@ -32,6 +33,9 @@ from b2_z1.rsl_rl.modules import AMP_ActorCritic
 from b2_z1.rsl_rl.networks import AMP_Discriminator
 from b2_z1.rsl_rl.datasets import AMPLoader
 from b2_z1.rsl_rl.utils import Normalizer
+from b2_z1.rsl_rl.utils.curriculum_state import capture_curriculum_state, legacy_curriculum_state, restore_curriculum_state
+from b2_z1.rsl_rl.utils.vd5_curriculum_state import capture_vd5_curriculum_state, restore_vd5_curriculum_state
+from b2_z1.rsl_rl.utils.checkpoint_retention import CheckpointRetention
 
 
 class AMP_OnPolicyRunner:
@@ -39,6 +43,7 @@ class AMP_OnPolicyRunner:
 
     def __init__(self, env: VecEnv, train_cfg: dict, log_dir: str | None = None, device="cpu"):
         self.cfg = deepcopy(train_cfg)
+        self.checkpoint_retention = CheckpointRetention(log_dir, self.cfg.get("keep_last_checkpoints", 0))
         self.alg_cfg = self.cfg["algorithm"]
         self.policy_cfg = self.cfg["policy"]
         self.device = device
@@ -490,6 +495,16 @@ class AMP_OnPolicyRunner:
                 "count": self.alg.amp_normalizer.count,
             },
         }
+        experiment_name = self.cfg.get("experiment_name")
+        saved_dict["training_experiment_name"] = experiment_name
+        if experiment_name == "b2_z1_vd2_curve_amp":
+            saved_dict["vd2_curriculum_state"] = capture_curriculum_state(self.env)
+        elif experiment_name == "b2_z1_vd3_curve_amp":
+            saved_dict["vd3_curriculum_state"] = capture_curriculum_state(self.env)
+        elif experiment_name == "b2_z1_vd4_front_calibrated_amp":
+            saved_dict["vd4_curriculum_state"] = capture_curriculum_state(self.env)
+        elif experiment_name in {"b2_z1_vd5_world_seam_amp", "b2_z1_vd5_startup_amp"}:
+            saved_dict["vd5_curriculum_state"] = capture_vd5_curriculum_state(self.env)
         # -- Save RND model if used
         if self.alg.rnd:
             saved_dict["rnd_state_dict"] = self.alg.rnd.state_dict()
@@ -500,14 +515,64 @@ class AMP_OnPolicyRunner:
             saved_dict["privileged_obs_norm_state_dict"] = self.privileged_obs_normalizer.state_dict()
 
         # save model
-        torch.save(saved_dict, path)
+        # Publish a complete checkpoint before considering any retention deletions.
+        existed_before = os.path.lexists(path)
+        temporary_path = None
+        try:
+            with tempfile.NamedTemporaryFile(dir=os.path.dirname(os.path.abspath(path)),
+                                             prefix=".checkpoint_", suffix=".partial", delete=False) as temporary:
+                temporary_path = temporary.name
+            torch.save(saved_dict, temporary_path)
+            os.replace(temporary_path, path)
+        finally:
+            if temporary_path is not None and os.path.exists(temporary_path):
+                os.unlink(temporary_path)
 
         # upload model to external logging service
         if self.logger_type in ["neptune", "wandb"] and not self.disable_logs:
             self.writer.save_model(path, self.current_learning_iteration)
+        self.checkpoint_retention.saved(path, existed_before=existed_before)
 
-    def load(self, path: str, load_optimizer: bool = True):
+    def load(self, path: str, load_optimizer: bool = True, restore_curriculum: bool = False,
+             legacy_curriculum=None, migrate_vd5_startup: bool = False):
         loaded_dict = torch.load(path, map_location=self.device, weights_only=False)
+        if migrate_vd5_startup and (not restore_curriculum
+                or self.cfg.get("experiment_name") != "b2_z1_vd5_startup_amp"):
+            raise ValueError("VD5 startup migration requires the startup experiment and curriculum restoration")
+        if restore_curriculum:
+            is_vd3 = self.cfg.get("experiment_name") == "b2_z1_vd3_curve_amp"
+            is_vd4 = self.cfg.get("experiment_name") == "b2_z1_vd4_front_calibrated_amp"
+            is_startup = self.cfg.get("experiment_name") == "b2_z1_vd5_startup_amp"
+            is_vd5 = self.cfg.get("experiment_name") in {"b2_z1_vd5_world_seam_amp", "b2_z1_vd5_startup_amp"}
+            version = "VD5" if is_vd5 else "VD4" if is_vd4 else "VD3" if is_vd3 else "VD2"
+            experiment = ("b2_z1_vd5_startup_amp" if is_startup and not migrate_vd5_startup else
+                          "b2_z1_vd5_world_seam_amp" if is_vd5 else
+                          "b2_z1_vd4_front_calibrated_amp" if is_vd4 else
+                          "b2_z1_vd3_curve_amp" if is_vd3 else "b2_z1_vd2_curve_amp")
+            if is_vd3 or is_vd4 or is_vd5:
+                if loaded_dict.get("training_experiment_name") != experiment:
+                    raise ValueError(f"{version} resume requires a {version} checkpoint; use a warm-start for another version")
+                if legacy_curriculum is not None:
+                    raise ValueError(f"Legacy VD2 curriculum options cannot override {version} curriculum")
+            state_key = ("vd5_curriculum_state" if is_vd5 else "vd4_curriculum_state" if is_vd4 else
+                         "vd3_curriculum_state" if is_vd3 else "vd2_curriculum_state")
+            state = loaded_dict.get(state_key)
+            if state is None:
+                if is_vd3 or is_vd4 or is_vd5:
+                    raise ValueError(f"Checkpoint has no {version} curriculum state")
+                if legacy_curriculum is None:
+                    raise ValueError("Checkpoint has no VD2 curriculum state. Explicitly supply both "
+                                     "--vd2_legacy_curve_level and --vd2_legacy_position_steps; "
+                                     "these reconstruct an approximation, not the original state.")
+                state = legacy_curriculum_state(self.env, *legacy_curriculum)
+                print(f"[WARNING] Reconstructed approximate legacy VD2 curriculum: {state}")
+            elif legacy_curriculum is not None:
+                raise ValueError("Legacy curriculum options cannot override a checkpoint with saved curriculum state")
+            if is_vd5:
+                restore_vd5_curriculum_state(self.env, state, allow_startup_migration=migrate_vd5_startup)
+            else:
+                restore_curriculum_state(self.env, state)
+            print(f"[INFO] Restored {version} curriculum: {state}")
         # -- Load model
         resumed_training = self.alg.policy.load_state_dict(loaded_dict["model_state_dict"])
         if "discriminator_state_dict" in loaded_dict:
@@ -537,6 +602,8 @@ class AMP_OnPolicyRunner:
         if load_optimizer and resumed_training:
             # -- algorithm optimizer
             self.alg.optimizer.load_state_dict(loaded_dict["optimizer_state_dict"])
+            # PPO's adaptive scheduler keeps a separate scalar alongside Adam.
+            self.alg.learning_rate = self.alg.optimizer.param_groups[0]["lr"]
             # -- RND optimizer if used
             if self.alg.rnd:
                 self.alg.rnd_optimizer.load_state_dict(loaded_dict["rnd_optimizer_state_dict"])

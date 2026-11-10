@@ -181,6 +181,7 @@ def rear_camera_command_cfg():
 def make_command(count=3, **options):
     cfg = types.SimpleNamespace(
         forward_speed=0.4,
+        rel_standing_envs=0.0,
         resampling_time_range=(10.0, 10.0),
         lookahead_distance=0.6,
         heading_control_stiffness=1.5,
@@ -853,6 +854,17 @@ class CommandTests(unittest.TestCase):
         torch.testing.assert_close(command.vel_command_b[:, 1], torch.zeros(64))
         self.assertTrue((command.vel_command_b[:, 2].abs() <= 0.8).all())
         self.assertFalse(command.is_standing_env.any())
+
+    def test_standing_and_walking_commands_and_partial_resample(self):
+        command = make_command(4, forward_speed=0.2, rel_standing_envs=1.0)
+        self.assertTrue(command.is_standing_env.all())
+        torch.testing.assert_close(command.vel_command_b, torch.zeros(4, 3))
+        command.cfg.rel_standing_envs = 0.0
+        command._resample_command([1, 3])
+        torch.testing.assert_close(command.vel_command_b[:, 0], torch.tensor([0.0, 0.2, 0.0, 0.2]))
+        torch.testing.assert_close(command.vel_command_b[[0, 2]], torch.zeros(2, 3))
+        command._update_command()
+        torch.testing.assert_close(command.vel_command_b[[0, 2]], torch.zeros(2, 3))
 
     def test_curve_stays_fixed_when_base_moves_and_turns(self):
         command = make_command()

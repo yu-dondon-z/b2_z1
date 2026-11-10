@@ -103,7 +103,11 @@ class UnitreeUrdfFileCfg(sim_utils.UrdfFileCfg):
 
 B2_Z1_GUN_CFG = UnitreeArticulationCfg(
     spawn=UnitreeUrdfFileCfg(
-        asset_path=f"{B2Z1_ASSETS_DIR}/b2_z1_gun.urdf",
+        # VD3 folds the zero-load gun shapes into link06. No zero-mass PhysX
+        # rigid body is spawned, and the original URDF remains available for FK.
+        asset_path=f"{B2Z1_ASSETS_DIR}/b2_z1_vd3_zero_gun.urdf",
+        merge_fixed_joints=True,
+        usd_dir=os.environ.get("VD3_ASSET_CACHE", "/dev/shm/vd3_training_assets"),
         self_collision=False,
     ),
     

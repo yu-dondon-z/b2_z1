@@ -205,7 +205,9 @@ class CurveVelocityCommand(UniformVelocityCommand):
         self.metrics["turn_angle"][env_ids] = self.curve_turn_angles[env_ids].abs().amax(dim=-1)
         self.metrics["turn_count"][env_ids] = self.curve_turn_count[env_ids].float()
         self.metrics["path_length"][env_ids] = length
-        self.is_standing_env[env_ids] = False
+        self.is_standing_env[env_ids] = (
+            torch.rand_like(self.is_standing_env[env_ids], dtype=torch.float32) < self.cfg.rel_standing_envs
+        )
         self.is_heading_env[env_ids] = True
         self._update_command(env_ids)
 
@@ -240,10 +242,13 @@ class CurveVelocityCommand(UniformVelocityCommand):
             points_h, visible, self.cfg.lookahead_distance
         )
         yaw_rate = self.cfg.heading_control_stiffness * heading + self.cfg.forward_speed * curvature
-        self.vel_command_b[env_ids, 0] = self.cfg.forward_speed
+        standing = self.is_standing_env[env_ids]
+        self.vel_command_b[env_ids, 0] = torch.where(standing, 0.0, self.cfg.forward_speed)
         self.vel_command_b[env_ids, 1] = 0.0
         # With no visible segment, retain fixed speed and request straight travel.
-        self.vel_command_b[env_ids, 2] = torch.where(path_visible, yaw_rate.clamp(*self.cfg.ranges.ang_vel_z), 0.0)
+        self.vel_command_b[env_ids, 2] = torch.where(
+            path_visible & ~standing, yaw_rate.clamp(*self.cfg.ranges.ang_vel_z), 0.0
+        )
         base_yaw = 2.0 * torch.atan2(horizontal_quat[:, 3], horizontal_quat[:, 0])
         self.heading_target[env_ids] = torch.atan2(torch.sin(base_yaw + heading), torch.cos(base_yaw + heading))
         self.camera_pixels[env_ids] = pixels

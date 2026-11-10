@@ -91,13 +91,24 @@ class AMP_PPO:
             if isinstance(symmetry_cfg["data_augmentation_func"], str):
                 symmetry_cfg["data_augmentation_func"] = string_to_callable(symmetry_cfg["data_augmentation_func"])
             # Check valid configuration
-            if symmetry_cfg["use_data_augmentation"] and not callable(symmetry_cfg["data_augmentation_func"]):
+            if not callable(symmetry_cfg["data_augmentation_func"]):
                 raise ValueError(
-                    "Data augmentation enabled but the function is not callable:"
+                    "Symmetry requires a callable transformation:"
                     f" {symmetry_cfg['data_augmentation_func']}"
                 )
             # Store symmetry configuration
             self.symmetry = symmetry_cfg
+            action_indices = symmetry_cfg.get("mirror_action_indices")
+            if action_indices is not None and (
+                not action_indices or len(set(action_indices)) != len(action_indices)
+                or any(type(index) is not int or index < 0 or index >= policy.std.numel()
+                       for index in action_indices)
+            ):
+                raise ValueError("mirror_action_indices must select unique valid action dimensions.")
+            self.mirror_action_indices = (
+                torch.tensor(action_indices, dtype=torch.long, device=self.device)
+                if action_indices is not None else None
+            )
         else:
             self.symmetry = None
 
@@ -455,10 +466,12 @@ class AMP_PPO:
                 )
 
                 # compute the loss (we skip the first augmentation as it is the original one)
-                mse_loss = torch.nn.MSELoss()
-                symmetry_loss = mse_loss(
-                    mean_actions_batch[original_batch_size:], actions_mean_symm_batch.detach()[original_batch_size:]
-                )
+                predicted = mean_actions_batch[original_batch_size:]
+                target = actions_mean_symm_batch.detach()[original_batch_size:]
+                if self.mirror_action_indices is not None:
+                    predicted = predicted.index_select(-1, self.mirror_action_indices)
+                    target = target.index_select(-1, self.mirror_action_indices)
+                symmetry_loss = torch.nn.functional.mse_loss(predicted, target)
                 # add the loss to the total loss
                 if self.symmetry["use_mirror_loss"]:
                     loss += self.symmetry["mirror_loss_coeff"] * symmetry_loss

@@ -1,0 +1,109 @@
+seed: 42
+device: cuda:0
+num_steps_per_env: 24
+max_iterations: 1000
+empirical_normalization: false
+policy:
+  class_name: AMP_ActorCritic
+  init_noise_std: 1.0
+  noise_std_type: scalar
+  actor_hidden_dims:
+  - 512
+  - 256
+  - 128
+  critic_hidden_dims:
+  - 512
+  - 256
+  - 128
+  activation: elu
+algorithm:
+  class_name: AMP_PPO
+  num_learning_epochs: 5
+  num_mini_batches: 4
+  learning_rate: 5.0e-05
+  schedule: fixed
+  gamma: 0.99
+  lam: 0.95
+  entropy_coef: 0.01
+  desired_kl: 0.01
+  max_grad_norm: 1.0
+  value_loss_coef: 1.0
+  use_clipped_value_loss: true
+  clip_param: 0.2
+  normalize_advantage_per_mini_batch: false
+  symmetry_cfg:
+    use_data_augmentation: false
+    use_mirror_loss: true
+    data_augmentation_func: b2_z1.tasks.manager_based.b2_z1.mdp.vd3_symmetry:vd3_left_right
+    mirror_loss_coeff: 0.2
+    mirror_action_indices:
+    - 0
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+    - 7
+    - 9
+    - 10
+    - 11
+    - 12
+  rnd_cfg: null
+clip_actions: null
+save_interval: 250
+experiment_name: b2_z1_vd5_startup_amp
+run_name: vd5_startup_80ref_20stand_continue1000
+logger: tensorboard
+neptune_project: isaaclab
+wandb_project: isaaclab
+resume: true
+load_run: 2026-11-10_10-44-52_vd5_startup_80ref_20stand_corrected_20261110
+load_checkpoint: model_3499.pt
+keep_last_checkpoints: 5
+amp_cfg:
+  amp_motion_files:
+  - /home/dong/b2_z1_VD2/datasets/b2_motion/b2_backward.txt
+  - /home/dong/b2_z1_VD2/datasets/b2_motion/b2_backward_fast.txt
+  - /home/dong/b2_z1_VD2/datasets/b2_motion/b2_backward_faster.txt
+  - /home/dong/b2_z1_VD2/datasets/b2_motion/b2_forward.txt
+  - /home/dong/b2_z1_VD2/datasets/b2_motion/b2_forward_fast.txt
+  - /home/dong/b2_z1_VD2/datasets/b2_motion/b2_forward_faster.txt
+  - /home/dong/b2_z1_VD2/datasets/b2_motion/b2_left.txt
+  - /home/dong/b2_z1_VD2/datasets/b2_motion/b2_left_fast.txt
+  - /home/dong/b2_z1_VD2/datasets/b2_motion/b2_left_faster.txt
+  - /home/dong/b2_z1_VD2/datasets/b2_motion/b2_right.txt
+  - /home/dong/b2_z1_VD2/datasets/b2_motion/b2_right_fast.txt
+  - /home/dong/b2_z1_VD2/datasets/b2_motion/b2_right_faster.txt
+  - /home/dong/b2_z1_VD2/datasets/b2_motion/b2_stance.txt
+  - /home/dong/b2_z1_VD2/datasets/b2_motion/b2_turn_left.txt
+  - /home/dong/b2_z1_VD2/datasets/b2_motion/b2_turn_left_fast.txt
+  - /home/dong/b2_z1_VD2/datasets/b2_motion/b2_turn_left_faster.txt
+  - /home/dong/b2_z1_VD2/datasets/b2_motion/b2_turn_right.txt
+  - /home/dong/b2_z1_VD2/datasets/b2_motion/b2_turn_right_fast.txt
+  - /home/dong/b2_z1_VD2/datasets/b2_motion/b2_turn_right_faster.txt
+  amp_reward_coef: 0.2
+  amp_discr_hidden_dims:
+  - 1024
+  - 512
+  amp_task_reward_lerp: 0.8
+  amp_num_preload_transitions: 20000
+  min_normalized_std:
+  - 0.01
+  - 0.01
+  - 0.01
+  - 0.01
+  - 0.01
+  - 0.01
+  - 0.01
+  - 0.01
+  - 0.01
+  - 0.01
+  - 0.01
+  - 0.01
+  - 0.01
+  - 0.01
+  - 0.01
+  - 0.01
+  - 0.01
+  - 0.01

@@ -65,7 +65,8 @@ class B2Z1SceneCfg(InteractiveSceneCfg):
     # robot: ArticulationCfg = B2_Z1_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
     robot: ArticulationCfg = B2_Z1_GUN_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
     
-    contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=3, 
+    # 20 physics samples at 200 Hz cover the 0.1 s tool-support window.
+    contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=20,
                                       track_air_time=True, debug_vis=False)
 
     # Populated from commands.base_velocity calibration: USD prim in training, tiled RGB sensor in Play.
@@ -249,8 +250,21 @@ class EventCfg:
         func=mdp.reset_joints_by_scale,
         mode="reset",
         params={
+            "asset_cfg": SceneEntityCfg("robot", joint_names=[".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"]),
             "position_range": (1.0, 1.0),
             "velocity_range": (-1.0, 1.0),
+        },
+    )
+
+    # Keep leg reference-state initialization, without injecting an unrelated
+    # random initial angular velocity into the six arm joints.
+    reset_arm_joints = EventTerm(
+        func=mdp.reset_joints_by_scale,
+        mode="reset",
+        params={
+            "asset_cfg": SceneEntityCfg("robot", joint_names=[f"joint{i}" for i in range(1, 7)]),
+            "position_range": (1.0, 1.0),
+            "velocity_range": (0.0, 0.0),
         },
     )
 
@@ -269,8 +283,9 @@ class CommandsCfg:
     
     base_velocity = mdp.command_cfg.CurveVelocityCommandCfg(
         asset_name="robot",
-        resampling_time_range=(25.0, 25.0),
-        forward_speed=0.4,
+        resampling_time_range=(3.0, 8.0),
+        forward_speed=0.2,
+        rel_standing_envs=0.2,
         lookahead_distance=0.6,
         path_type="turn",
         trajectory_num_points=192,
@@ -280,12 +295,12 @@ class CommandsCfg:
         limit_trajectory_curve_offset_scale=0.1,
         debug_vis=False,
         ranges=mdp.command_cfg.UniformVelocityCommandCfg.Ranges(
-            lin_vel_x=(0.4, 0.4),
+            lin_vel_x=(0.0, 0.2),
             lin_vel_y=(0.0, 0.0),
             ang_vel_z=(-0.8, 0.8),
         ),
         limit_ranges=mdp.command_cfg.UniformVelocityCommandCfg.Ranges(
-            lin_vel_x=(0.4, 0.4),
+            lin_vel_x=(0.0, 0.2),
             lin_vel_y=(0.0, 0.0),
             ang_vel_z=(-0.8, 0.8),
         ),
@@ -326,37 +341,55 @@ class RewardsCfg:
     """Task tracking and physical regularization; gait style comes from AMP."""
 
     track_lin_vel_xy = RewTerm(
-        func=mdp.track_lin_vel_xy_exp, weight=4.5,
-        params={"command_name": "base_velocity", "std": math.sqrt(0.25)},
+        func=mdp.track_lin_vel_xy_exp, weight=6.0,
+        params={"command_name": "base_velocity", "std": 0.2},
     )
     track_ang_vel_z = RewTerm(
         func=mdp.track_ang_vel_z_exp, weight=2.5,
-        params={"command_name": "base_velocity", "std": math.sqrt(0.25)},
+        params={"command_name": "base_velocity", "std": 0.3},
     )
     
     
     end_effector_position_tracking_exp = RewTerm(
         func=mdp.position_command_error_exp, weight=5.0,
         params={
-            "command_name": "ee_target", "std": 0.1,
-            "asset_cfg": SceneEntityCfg("robot", body_names="dummy_target"),
+            "command_name": "ee_target", "std": 0.07,
+            "asset_cfg": SceneEntityCfg("robot", body_names="link06"),
             "base_name": "base_link",
         },
     )
     end_effector_orientation_error = RewTerm(
-        func=mdp.orientation_command_error, weight=-0.2,
-        params={"command_name": "ee_target", "asset_cfg": SceneEntityCfg("robot", body_names="dummy_target")},
+        func=mdp.tcp_orientation_command_error, weight=-0.4,
+        params={"command_name": "ee_target", "asset_cfg": SceneEntityCfg("robot", body_names="link06")},
     )
     
     
-    ee_stability = RewTerm(
-        func=mdp.link_stability, weight=-0.2,
-        params={"asset_cfg": SceneEntityCfg("robot", body_names="dummy_target"), "link_name": "link_gun"},
+    # A long tool can pivot around a steady TCP while its flange swings. Track
+    # link06 against the flange pose/twist implied by the desired TCP pose.
+    flange_position_residual = RewTerm(
+        func=mdp.flange_position_residual, weight=-0.25,
+        params={"command_name": "ee_target", "scale": 0.05, "deadzone": 0.005, "max_penalty": 4.0},
+    )
+    flange_linear_velocity_residual = RewTerm(
+        func=mdp.flange_linear_velocity_residual, weight=-0.3,
+        params={"command_name": "ee_target", "scale": 0.12, "deadzone": 0.01, "max_penalty": 4.0},
+    )
+    flange_angular_velocity_residual = RewTerm(
+        func=mdp.flange_angular_velocity_residual, weight=-0.1,
+        params={"command_name": "ee_target", "scale": 0.5, "deadzone": 0.05, "max_penalty": 4.0},
+    )
+    arm_joint_velocity = RewTerm(
+        func=mdp.arm_joint_velocity_l2, weight=-0.02,
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names=[f"joint{i}" for i in range(1, 7)])},
     )
     base_linear_velocity = RewTerm(func=mdp.lin_vel_z_l2, weight=-3.0)
     base_angular_velocity = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.5)
-    # AMP learns base height/orientation, leg posture, swing height, contact timing,
-    # and foot pairing. Hand-written targets for these quantities fight the prior.
+    # AMP provides gait features but has no static base attitude observation.
+    # A small inclination deadzone permits normal gait motion while penalizing leaning.
+    base_tilt = RewTerm(
+        func=mdp.base_tilt_penalty, weight=-3.0,
+        params={"asset_cfg": SceneEntityCfg("robot"), "deadzone": 0.1, "scale": 0.2},
+    )
     
     arm_deviation = RewTerm(
         func=mdp.joint_deviation_l1, 
@@ -385,7 +418,17 @@ class RewardsCfg:
     dof_pos_limits = RewTerm(func=mdp.joint_pos_limits, weight=-1.0)
     undesired_contacts = RewTerm(
         func=mdp.uncontacts, weight=-1.0,
-        params={"threshold": 1.0, "sensor_cfg": SceneEntityCfg("contact_forces", body_names="link_gun")},
+        # The massless gun collision now belongs to its physical parent link06.
+        params={"threshold": 1.0, "sensor_cfg": SceneEntityCfg("contact_forces", body_names="link06")},
+    )
+    # A zero-payload tool still transmits ground reaction forces through link06.
+    # Permit light working contact, and penalize upward load without saturation.
+    tool_support_force = RewTerm(
+        func=mdp.tool_support_force, weight=-2.0,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names="link06"),
+            "deadzone": 5.0, "force_scale": 100.0, "duration_s": 0.1,
+        },
     )
 
 
@@ -396,14 +439,21 @@ class TerminationsCfg:
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
     base_contact = DoneTerm(
         func=mdp.illegal_contact,
-        # params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="base_link"), "threshold": 1.0},
-        
-        params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=["base_link", ".*_calf"]), "threshold": 1.0},
-        
-        
+        params={
+            "sensor_cfg": SceneEntityCfg(
+                "contact_forces", body_names=["base_link", ".*_hip", ".*_thigh", ".*_calf", "link0[0-5]"]
+            ),
+            "threshold": 1.0,
+        },
     )
-    # ".*_thigh"
-    bad_orientation = DoneTerm(func=mdp.bad_orientation, params={"limit_angle": 1.0})
+    tool_support = DoneTerm(
+        func=mdp.tool_support_termination,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names="link06"),
+            "sustained_force": 20.0, "peak_force": 150.0, "duration_s": 0.1,
+        },
+    )
+    bad_orientation = DoneTerm(func=mdp.bad_orientation, params={"limit_angle": 0.5})
 
 
 @configclass
@@ -509,4 +559,4 @@ class B2Z1PlayEnvCfg(B2Z1EnvCfg):
         self.commands.ee_target.curriculum_enabled = False
         self.commands.ee_target.debug_vis = True
 
-        self.terminations.base_contact = None
+        # Preserve the training contact, tool-support, and inclination guards.

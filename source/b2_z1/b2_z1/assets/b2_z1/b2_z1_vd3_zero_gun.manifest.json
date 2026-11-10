@@ -1,0 +1,57 @@
+{
+  "version": "VD3",
+  "gun_added_mass_kg": 0.0,
+  "gun_added_inertia": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "nominal_robot_mass_kg": 78.99902020000002,
+  "physical_tcp_body": false,
+  "tcp_parent_body": "link06",
+  "tcp_transform_in_link06": [
+    [
+      3.673205103247453e-06,
+      -4.6928204133545015e-06,
+      0.9999999999822424,
+      0.10499999999979762
+    ],
+    [
+      2.6984871462320583e-11,
+      0.9999999999889887,
+      4.692820413287039e-06,
+      1.1019615310039722e-07
+    ],
+    [
+      -0.9999999999932537,
+      9.747179571131628e-12,
+      3.6732051033336414e-06,
+      -0.8200000000000001
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "removed_fixed_bodies": [
+    "link_mounter",
+    "link_gun",
+    "dummy_target"
+  ],
+  "gun_shape_count": {
+    "visual": 1,
+    "collision": 1
+  },
+  "source_urdf": "b2_z1_gun.urdf",
+  "source_sha256": "14ae3abccfa4d7e5f74f69347ced43f7b1ec5bed728376972260d8b18130c9c6",
+  "generated_urdf": "b2_z1_vd3_zero_gun.urdf",
+  "generated_sha256": "a6a1f7143d1ce33d6e25b3cbaf7809d17a971c1ec793e6055b365fda9bb39be0"
+}

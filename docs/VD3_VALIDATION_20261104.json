@@ -1,0 +1,116 @@
+{
+  "cpu_tests": {
+    "passed": 113,
+    "subtests_passed": 111
+  },
+  "smoke_run": "/home/dong/b2_z1_VD3/logs/rsl_rl/b2_z1_vd3_curve_amp/2026-11-04_09-25-22_vd3_smoke_20261104",
+  "resume_run": "/home/dong/b2_z1_VD3/logs/rsl_rl/b2_z1_vd3_curve_amp/2026-11-04_09-27-12_vd3_resume_smoke_20261104",
+  "smoke_ppo_updates": 2,
+  "resume_ppo_updates": 1,
+  "smoke_parallel_environments": 256,
+  "resume_parallel_environments": 16,
+  "long_training_started": false,
+  "smoke_source_snapshot_matches_after_run": true,
+  "vd2_baseline_files_unchanged": true,
+  "actor_observations": 70,
+  "actor_actions": 18,
+  "resume_checkpoint_iteration": 1,
+  "resume_checkpoint_curriculum": {
+    "version": 1,
+    "curve_level": 0.0,
+    "position_ranges": {
+      "pos_x": [
+        -1.03,
+        -1.01
+      ],
+      "pos_y": [
+        -0.02,
+        0.02
+      ],
+      "pos_z": [
+        -0.31,
+        -0.29
+      ],
+      "roll": [
+        0.0,
+        0.0
+      ],
+      "pitch": [
+        1.1207963267948966,
+        1.1207963267948966
+      ],
+      "yaw": [
+        3.141592653589793,
+        3.141592653589793
+      ]
+    },
+    "curve_elapsed_steps": 72,
+    "position_elapsed_steps": 72
+  },
+  "runtime_asset": {
+    "version": "VD3",
+    "status": "passed",
+    "body_count": 24,
+    "joint_count": 18,
+    "gun_added_mass_kg": 0.0,
+    "gun_added_inertia": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "tcp_parent_body": "link06",
+    "nominal_total_mass_kg": 78.99901580810547,
+    "link06_mass_kg": 0.2887580990791321,
+    "link06_inertia": [
+      0.00018330002785660326,
+      1.2000020888081053e-06,
+      5.000002829547157e-07,
+      1.2000020888081053e-06,
+      0.00014749998808838427,
+      1.000043994281441e-07,
+      5.000005103283911e-07,
+      1.00000761449337e-07,
+      0.00014679996820632368
+    ],
+    "live_total_mass_range_kg": [
+      78.02086639404297,
+      81.98540496826172
+    ],
+    "base_mass_randomization_range_kg": [
+      -0.9781494140625,
+      2.9863815307617188
+    ],
+    "body_names": [
+      "base_link",
+      "FL_hip",
+      "FR_hip",
+      "RL_hip",
+      "RR_hip",
+      "link00",
+      "FL_thigh",
+      "FR_thigh",
+      "RL_thigh",
+      "RR_thigh",
+      "link01",
+      "FL_calf",
+      "FR_calf",
+      "RL_calf",
+      "RR_calf",
+      "link02",
+      "FL_foot",
+      "FR_foot",
+      "RL_foot",
+      "RR_foot",
+      "link03",
+      "link04",
+      "link05",
+      "link06"
+    ]
+  }
+}

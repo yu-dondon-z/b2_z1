@@ -1,4 +1,18 @@
-# Template for Isaac Lab Projects
+# B2 + Z1 — VD5 Startup
+
+当前版本为 **VD5 Startup**，从本地 `/home/dong/b2_z1_VD2` 同步到
+[`yu-dondon-z/b2_z1` 的 `VD5` 分支](https://github.com/yu-dondon-z/b2_z1/tree/VD5)。
+版本、任务和检查点信息见 [CODE_VERSION.json](CODE_VERSION.json)。
+
+- 当前检查点：[`model_4498.pt`](test_ckpt/b2_z1_vd5_startup_amp/2026-11-10_11-47-57_vd5_startup_80ref_20stand_continue1000/model_4498.pt)，同目录保存训练参数和 SHA256 清单。
+- 当前训练效果与限制：[VD5 任务跟踪检查](docs/VD5_TASK_TRACKING_REVIEW_20261110.md)。
+- 同步内容、检查点使用和验证方式：[VD5 GitHub 版本说明](docs/VD5_GITHUB_SYNC_20261110.md)。
+- 焊缝命令与训练方案：[VD5 世界焊缝命令](docs/VD5_WORLD_SEAM_COMMANDS_20261109.md)。
+
+该检查点是 Isaac Lab 中普通站姿起步的仿真候选，底盘路径偏移和足端避线仍需改进；
+本版本没有验证真实相机输入或实机闭环。
+
+## Isaac Lab Project Setup
 
 ## Overview
 

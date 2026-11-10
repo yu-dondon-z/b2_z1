@@ -13,6 +13,7 @@ from isaaclab.sensors import ContactSensor
 import isaaclab.utils.math as math_utils
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers.manager_base import ManagerTermBase
+from .tcp_frame import tcp_pose_b
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
@@ -22,8 +23,10 @@ Joint penalties.
 """
 
 def smoothness(env: ManagerBasedRLEnv) -> torch.Tensor:
-    """Penalize the rate of change of the actions using L2 squared kernel."""
-    return torch.sum(torch.square(env.action_manager.action - env.action_manager.action*2 + env.pre_pre_action), dim=1)
+    """Penalize action second differences a[t] - 2*a[t-1] + a[t-2]."""
+    return torch.sum(torch.square(
+        env.action_manager.action - 2.0 * env.action_manager.prev_action + env.pre_pre_action
+    ), dim=1)
 
 def power_penalty(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
     """Penalize power consumption of the robot."""
@@ -486,16 +489,8 @@ def position_command_error_l2(
 ) -> torch.Tensor:
 
     asset: RigidObject = env.scene[asset_cfg.name]
-    ee_id = asset_cfg.body_ids[0]
-    base_id, _ = asset.find_bodies(base_name)
-    base_id = base_id[0]
     command = env.command_manager.get_command(command_name)
-
-    ee_pos_w = asset.data.body_pos_w[:, ee_id]
-    base_pos_w = asset.data.body_pos_w[:, base_id]
-    base_quat_w = asset.data.body_quat_w[:, base_id]
-
-    end_effector_curr_pos_base = quat_apply_inverse(base_quat_w, ee_pos_w - base_pos_w)
+    end_effector_curr_pos_base, _ = tcp_pose_b(asset, base_name)
     pos_error = end_effector_curr_pos_base - command[:, :3]
     
     return torch.norm(pos_error, dim=1)
@@ -510,16 +505,8 @@ def position_command_error_exp(
 ) -> torch.Tensor:
     """Reward end-effector position tracking in the base frame."""
     asset: RigidObject = env.scene[asset_cfg.name]
-    ee_id = asset_cfg.body_ids[0]
-    base_id, _ = asset.find_bodies(base_name)
-    base_id = base_id[0]
     command = env.command_manager.get_command(command_name)
-
-    ee_pos_w = asset.data.body_pos_w[:, ee_id]
-    base_pos_w = asset.data.body_pos_w[:, base_id]
-    base_quat_w = asset.data.body_quat_w[:, base_id]
-
-    end_effector_curr_pos_base = quat_apply_inverse(base_quat_w, ee_pos_w - base_pos_w)
+    end_effector_curr_pos_base, _ = tcp_pose_b(asset, base_name)
     pos_error = end_effector_curr_pos_base - command[:, :3]
 
     error_sq = torch.sum(torch.square(pos_error), dim=1)
@@ -536,20 +523,28 @@ def position_command_error_tanh(
 ) -> torch.Tensor:
 
     asset: RigidObject = env.scene[asset_cfg.name]
-    ee_id = asset_cfg.body_ids[0]
-    base_id, _ = asset.find_bodies(base_name)
-    base_id = base_id[0]
     command = env.command_manager.get_command(command_name)
-
-    ee_pos_w = asset.data.body_pos_w[:, ee_id]
-    base_pos_w = asset.data.body_pos_w[:, base_id]
-    base_quat_w = asset.data.body_quat_w[:, base_id]
-
-    end_effector_curr_pos_base = quat_apply_inverse(base_quat_w, ee_pos_w - base_pos_w)
+    end_effector_curr_pos_base, _ = tcp_pose_b(asset, base_name)
     pos_error = end_effector_curr_pos_base - command[:, :3]
 
     distance = torch.norm(pos_error, dim=1)
     return 1 - torch.tanh(distance / std)
+
+
+def tcp_orientation_command_error(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg,
+    base_name: str = "base_link",
+) -> torch.Tensor:
+    """Shortest TCP orientation error in radians, in the command's base frame."""
+    _, current = tcp_pose_b(env.scene[asset_cfg.name], base_name)
+    desired = env.command_manager.get_command(command_name)[:, 3:7]
+    current = torch.nn.functional.normalize(current, dim=-1)
+    desired = torch.nn.functional.normalize(desired, dim=-1)
+    # q and -q represent the same orientation.
+    dot = torch.abs(torch.sum(current * desired, dim=-1)).clamp(0.0, 1.0)
+    return 2.0 * torch.atan2(torch.sqrt((1.0 - dot.square()).clamp_min(0.0)), dot)
 
 
 def link_stability(
