@@ -55,10 +55,13 @@ math_fixture = types.SimpleNamespace(
     * (2 * torch.atan2(torch.linalg.vector_norm(quat[:, 1:], dim=-1, keepdim=True), quat[:, :1])),
 )
 package = types.ModuleType("rear_arm_test")
-package.__path__ = [str(COMMANDS)]
+package.__path__ = [str(COMMANDS.parent)]
+commands_package = types.ModuleType("rear_arm_test.commands")
+commands_package.__path__ = [str(COMMANDS)]
 with patch.dict(sys.modules, {
     "rear_arm_test": package,
-    "rear_arm_test.curve_geometry": geometry,
+    "rear_arm_test.commands": commands_package,
+    "rear_arm_test.commands.curve_geometry": geometry,
     "isaaclab": types.ModuleType("isaaclab"),
     "isaaclab.sim": types.ModuleType("isaaclab.sim"),
     "isaaclab.assets": types.SimpleNamespace(Articulation=object),
@@ -67,7 +70,7 @@ with patch.dict(sys.modules, {
     "isaaclab.markers.config": types.SimpleNamespace(FRAME_MARKER_CFG=None, POSITION_GOAL_MARKER_CFG=None),
     "isaaclab.utils.math": math_fixture,
 }):
-    spec = importlib.util.spec_from_file_location("rear_arm_test.pose_command_wbc", COMMANDS / "pose_command_wbc.py")
+    spec = importlib.util.spec_from_file_location("rear_arm_test.commands.pose_command_wbc", COMMANDS / "pose_command_wbc.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     UniformPoseWBCCommand = module.UniformPoseWBCCommand

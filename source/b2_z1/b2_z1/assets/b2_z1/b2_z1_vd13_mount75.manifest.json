@@ -1,0 +1,53 @@
+{
+  "version": "VD13 mount75",
+  "source_sha256": "a6a1f7143d1ce33d6e25b3cbaf7809d17a971c1ec793e6055b365fda9bb39be0",
+  "urdf_sha256": "b21de5407bfa1592d217e095eefa13e22af11179a36ec2e1175934529a10ce07",
+  "mesh_sha256": "49b23983831d6ee10e7f8ce1a940ae056c9815c9e1ac760b77677203f81839d5",
+  "gun_mass_kg": 2.93,
+  "nominal_robot_mass_kg": 81.9290202,
+  "length_m": 1.1,
+  "outer_diameter_m": 0.056,
+  "inner_diameter_m": 0.052,
+  "clamp_center_in_link06_m": [
+    0.075,
+    0.0,
+    0.1
+  ],
+  "tip_from_clamp_m": 0.75,
+  "rear_from_clamp_m": 0.35,
+  "tcp_in_link06_m": [
+    0.825,
+    0.0,
+    0.1
+  ],
+  "tube_com_in_link06_m": [
+    0.275,
+    0.0,
+    0.1
+  ],
+  "link06_combined_mass_kg": 3.2187581,
+  "link06_combined_com_m": [
+    0.2524966074791051,
+    -1.5564863463955246e-05,
+    0.09089982091096564
+  ],
+  "link06_combined_inertia_kg_m2": [
+    [
+      0.005026923864946014,
+      -1.0239712104959545e-05,
+      -0.006687861200418275
+    ],
+    [
+      -1.0239712104959545e-05,
+      0.31590265738867884,
+      -4.5261215408060674e-06
+    ],
+    [
+      -0.006687861200418275,
+      -4.5261215408060674e-06,
+      0.31319724934868515
+    ]
+  ],
+  "clamp_mass_kg": 0,
+  "note": "Flange centre is link06 +75mm, NOT link06 origin; new assets only"
+}

@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from isaaclab.assets import Articulation
 
 from isaaclab.utils.math import quat_apply_inverse, quat_conjugate, quat_mul
+from .tcp_frame import tcp_pose_b
 
 
 def amp_foot_pos(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
@@ -53,26 +54,7 @@ def end_effector_relative_pose(
 ) -> torch.Tensor:
     asset: Articulation = env.scene[asset_cfg.name]
 
-    ee_ids, _ = asset.find_bodies("dummy_target")
-    # link0_ids, _ = asset.find_bodies("link00")
-    link0_ids, _ = asset.find_bodies("base_link")
-
-    if len(ee_ids) == 0 or len(link0_ids) == 0:
-        return torch.zeros((env.num_envs, 7), device=env.device)
-
-    ee_pos_w    = asset.data.body_pos_w[:, ee_ids[0], :]
-    link0_pos_w = asset.data.body_pos_w[:, link0_ids[0], :]
-    link0_quat_w = asset.data.body_quat_w[:, link0_ids[0], :]
-    ee_quat_w    = asset.data.body_quat_w[:, ee_ids[0], :]
-
-    # Relative position: transform to link0 frame (not root frame)
-    rel_pos_w = ee_pos_w - link0_pos_w
-    rel_pos   = quat_apply_inverse(link0_quat_w, rel_pos_w)  # fixed
-
-    # Relative orientation: q_rel = q_link0^{-1} * q_ee
-    link0_quat_conj = quat_conjugate(link0_quat_w)           # fixed
-    rel_quat = quat_mul(link0_quat_conj, ee_quat_w)
-
+    rel_pos, rel_quat = tcp_pose_b(asset)
     return torch.cat([rel_pos, rel_quat], dim=-1)
 
 

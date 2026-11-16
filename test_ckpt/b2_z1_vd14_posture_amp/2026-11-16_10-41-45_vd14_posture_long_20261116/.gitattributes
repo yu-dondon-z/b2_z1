@@ -1,0 +1,2 @@
+# Keep the curated 12 MB checkpoint directly downloadable without Git LFS.
+*.pt -filter -diff -merge -text

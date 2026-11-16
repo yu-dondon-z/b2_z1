@@ -70,6 +70,12 @@ class UniformPoseWBCCommandCfg(UniformPoseCommandBaseCfg):
     """Minimum distance in meters between two recorded end-effector trajectory markers."""
     trajectory_curve_offset_scale: float = 0.1
     """Relative scale of the random Bezier control-point offsets used to bend the interpolated trajectory."""
+    vd5_seam_trailing_distance: float = 0.70
+    """VD5-only TCP distance behind the moving base, measured along its seam polyline (m)."""
+    vd5_ground_transition_steps: int = 100_000
+    """VD5-only vector steps to blend nominal reachable targets into ground seam targets."""
+    vd5_startup_duration_s: float = 0.0
+    """Nonzero only in the VD5 startup adaptation task, per-episode TCP handoff (s)."""
 
     # B2 joint_r_dc rear-camera mount from b2_z1_gun.urdf.
     camera_position_b: tuple[float, float, float] = (-0.4081, -0.025, 0.024861)
@@ -109,6 +115,8 @@ class CurveVelocityCommandCfg(UniformVelocityCommandCfg):
     class_type: type = CurveVelocityCommand
     base_name: str = "base_link"
     forward_speed: float = 0.4
+    vd5_startup_duration_s: float = 0.0
+    """Nonzero only for the VD5 startup adaptation command's velocity ramp (s)."""
     lookahead_distance: float = 0.6
     """Distance scale (m) for the lateral-error correction to the tangent heading."""
     heading_control_stiffness: float = 1.5

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import statistics
+import tempfile
 import time
 import torch
 from copy import deepcopy
@@ -32,6 +33,9 @@ from b2_z1.rsl_rl.modules import AMP_ActorCritic
 from b2_z1.rsl_rl.networks import AMP_Discriminator
 from b2_z1.rsl_rl.datasets import AMPLoader
 from b2_z1.rsl_rl.utils import Normalizer
+from b2_z1.rsl_rl.utils.curriculum_state import capture_curriculum_state, legacy_curriculum_state, restore_curriculum_state
+from b2_z1.rsl_rl.utils.vd5_curriculum_state import capture_vd5_curriculum_state, restore_vd5_curriculum_state
+from b2_z1.rsl_rl.utils.checkpoint_retention import CheckpointRetention
 
 
 class AMP_OnPolicyRunner:
@@ -39,6 +43,7 @@ class AMP_OnPolicyRunner:
 
     def __init__(self, env: VecEnv, train_cfg: dict, log_dir: str | None = None, device="cpu"):
         self.cfg = deepcopy(train_cfg)
+        self.checkpoint_retention = CheckpointRetention(log_dir, self.cfg.get("keep_last_checkpoints", 0))
         self.alg_cfg = self.cfg["algorithm"]
         self.policy_cfg = self.cfg["policy"]
         self.device = device
@@ -490,6 +495,25 @@ class AMP_OnPolicyRunner:
                 "count": self.alg.amp_normalizer.count,
             },
         }
+        experiment_name = self.cfg.get("experiment_name")
+        saved_dict["training_experiment_name"] = experiment_name
+        if experiment_name == "b2_z1_vd2_curve_amp":
+            saved_dict["vd2_curriculum_state"] = capture_curriculum_state(self.env)
+        elif experiment_name == "b2_z1_vd3_curve_amp":
+            saved_dict["vd3_curriculum_state"] = capture_curriculum_state(self.env)
+        elif experiment_name == "b2_z1_vd4_front_calibrated_amp":
+            saved_dict["vd4_curriculum_state"] = capture_curriculum_state(self.env)
+        elif experiment_name in {"b2_z1_vd5_world_seam_amp", "b2_z1_vd5_startup_amp", "b2_z1_vd6_smooth_amp", "b2_z1_vd7_tcp_amp", "b2_z1_vd8_roll_landing_amp", "b2_z1_vd9_physics_rate_amp", "b2_z1_vd10_hollow_gun_amp", "b2_z1_vd11_motion_quality_amp", "b2_z1_vd12_geometry_guard_amp", "b2_z1_vd13_mount75_amp", "b2_z1_vd14_posture_amp"}:
+            saved_dict["vd5_curriculum_state"] = capture_vd5_curriculum_state(self.env)
+        if experiment_name in {"b2_z1_vd12_geometry_guard_amp", "b2_z1_vd13_mount75_amp", "b2_z1_vd14_posture_amp"}:
+            geometry_profile = getattr(self.env.unwrapped.cfg, "vd12_geometry_profile", None)
+            if not isinstance(geometry_profile, dict) or not geometry_profile or "version" not in geometry_profile:
+                raise ValueError("VD12 checkpoints require a declared geometry profile")
+            saved_dict["vd12_geometry_profile"] = deepcopy(geometry_profile)
+        if experiment_name in {'b2_z1_vd13_mount75_amp', 'b2_z1_vd14_posture_amp'}:
+            saved_dict['vd13_mount_profile'] = deepcopy(self.env.unwrapped.cfg.vd13_mount_profile)
+        if experiment_name == 'b2_z1_vd14_posture_amp':
+            saved_dict['vd14_posture_profile'] = deepcopy(self.env.unwrapped.cfg.vd14_posture_profile)
         # -- Save RND model if used
         if self.alg.rnd:
             saved_dict["rnd_state_dict"] = self.alg.rnd.state_dict()
@@ -500,14 +524,166 @@ class AMP_OnPolicyRunner:
             saved_dict["privileged_obs_norm_state_dict"] = self.privileged_obs_normalizer.state_dict()
 
         # save model
-        torch.save(saved_dict, path)
+        # Publish a complete checkpoint before considering any retention deletions.
+        existed_before = os.path.lexists(path)
+        temporary_path = None
+        try:
+            with tempfile.NamedTemporaryFile(dir=os.path.dirname(os.path.abspath(path)),
+                                             prefix=".checkpoint_", suffix=".partial", delete=False) as temporary:
+                temporary_path = temporary.name
+            torch.save(saved_dict, temporary_path)
+            os.replace(temporary_path, path)
+        finally:
+            if temporary_path is not None and os.path.exists(temporary_path):
+                os.unlink(temporary_path)
 
         # upload model to external logging service
         if self.logger_type in ["neptune", "wandb"] and not self.disable_logs:
             self.writer.save_model(path, self.current_learning_iteration)
+        self.checkpoint_retention.saved(path, existed_before=existed_before)
 
-    def load(self, path: str, load_optimizer: bool = True):
+    def load(self, path: str, load_optimizer: bool = True, restore_curriculum: bool = False,
+             legacy_curriculum=None, migrate_vd5_startup: bool = False, migrate_vd6: bool = False,
+             migrate_vd7: bool = False, migrate_vd8: bool = False, migrate_vd9: bool = False,
+             migrate_vd11: bool = False, migrate_vd12: bool = False, migrate_vd13: bool = False,
+             migrate_vd14: bool = False):
         loaded_dict = torch.load(path, map_location=self.device, weights_only=False)
+        is_vd6 = self.cfg.get('experiment_name') == 'b2_z1_vd6_smooth_amp'
+        is_vd7 = self.cfg.get('experiment_name') == 'b2_z1_vd7_tcp_amp'
+        is_vd8 = self.cfg.get('experiment_name') == 'b2_z1_vd8_roll_landing_amp'
+        is_vd9 = self.cfg.get('experiment_name') == 'b2_z1_vd9_physics_rate_amp'
+        is_vd11 = self.cfg.get('experiment_name') == 'b2_z1_vd11_motion_quality_amp'
+        is_vd12 = self.cfg.get('experiment_name') == 'b2_z1_vd12_geometry_guard_amp'
+        is_vd13 = self.cfg.get('experiment_name') == 'b2_z1_vd13_mount75_amp'
+        is_vd14 = self.cfg.get('experiment_name') == 'b2_z1_vd14_posture_amp'
+        if migrate_vd14 and (not is_vd14 or legacy_curriculum is not None or any((
+                migrate_vd13, migrate_vd12, migrate_vd11, migrate_vd9, migrate_vd8,
+                migrate_vd7, migrate_vd6, migrate_vd5_startup))):
+            raise ValueError('VD14 migration must be exclusive and target VD14')
+        if is_vd14:
+            if legacy_curriculum is not None or any((migrate_vd13, migrate_vd12, migrate_vd11,
+                    migrate_vd9, migrate_vd8, migrate_vd7, migrate_vd6, migrate_vd5_startup)):
+                raise ValueError('VD14 cannot use legacy migration modes')
+            from b2_z1.assets.vd14_contract import validate_checkpoint
+            validate_checkpoint(loaded_dict, self.env.unwrapped.cfg.vd14_posture_profile,
+                                self.env.unwrapped.cfg.vd13_mount_profile,
+                                self.env.unwrapped.cfg.vd12_geometry_profile,
+                                migration=migrate_vd14, load_optimizer=load_optimizer,
+                                restore_curriculum=restore_curriculum)
+        if migrate_vd13 and (not is_vd13 or legacy_curriculum is not None or any((
+                migrate_vd12, migrate_vd11, migrate_vd9, migrate_vd8, migrate_vd7, migrate_vd6, migrate_vd5_startup))):
+            raise ValueError('VD13 migration must be exclusive and target VD13')
+        if is_vd13:
+            from b2_z1.assets.vd13_contract import validate_checkpoint
+            validate_checkpoint(loaded_dict, self.env.unwrapped.cfg.vd13_mount_profile,
+                                self.env.unwrapped.cfg.vd12_geometry_profile,
+                                migration=migrate_vd13, load_optimizer=load_optimizer,
+                                restore_curriculum=restore_curriculum)
+        if migrate_vd12 and (not is_vd12 or load_optimizer or restore_curriculum
+                             or legacy_curriculum is not None or migrate_vd11 or migrate_vd9
+                             or migrate_vd8 or migrate_vd7 or migrate_vd6 or migrate_vd5_startup):
+            raise ValueError('VD12 migration requires VD12, a fresh optimizer/curriculum and an exclusive VD11 source')
+        if is_vd12:
+            # Validate every new-version contract before changing curriculum,
+            # policy, AMP, optimizer or iteration. A renamed VD11 checkpoint is
+            # not a VD12 resume, even though its network dimensions agree.
+            geometry_profile = getattr(self.env.unwrapped.cfg, 'vd12_geometry_profile', None)
+            if not isinstance(geometry_profile, dict) or not geometry_profile or 'version' not in geometry_profile:
+                raise ValueError('VD12 checkpoints require a declared geometry profile')
+            required_experiment = ('b2_z1_vd11_motion_quality_amp' if migrate_vd12
+                                   else 'b2_z1_vd12_geometry_guard_amp')
+            if loaded_dict.get('training_experiment_name') != required_experiment:
+                raise ValueError(f'VD12 load requires {required_experiment}; use --vd12-from only for VD11')
+            if not migrate_vd12:
+                if not restore_curriculum or not load_optimizer:
+                    raise ValueError('VD12 same-version resume requires full curriculum restoration and optimizer restoration')
+                if loaded_dict.get('vd12_geometry_profile') != geometry_profile:
+                    raise ValueError('VD12 geometry profile differs or is missing; same-version resume refused')
+            required_keys = {'model_state_dict', 'discriminator_state_dict', 'amp_normalizer_state_dict', 'iter', 'infos'}
+            if load_optimizer:
+                required_keys.add('optimizer_state_dict')
+            missing = required_keys.difference(loaded_dict)
+            amp_state = loaded_dict.get('amp_normalizer_state_dict')
+            if (missing or loaded_dict.get('model_state_dict') is None
+                    or loaded_dict.get('discriminator_state_dict') is None
+                    or not isinstance(amp_state, dict)
+                    or any(amp_state.get(key) is None for key in ('mean', 'var', 'count'))
+                    or (load_optimizer and loaded_dict.get('optimizer_state_dict') is None)):
+                raise ValueError('VD12 load requires a complete policy and AMP checkpoint, plus optimizer for resume')
+            iteration = loaded_dict['iter']
+            if isinstance(iteration, bool) or not isinstance(iteration, int) or iteration < 0:
+                raise ValueError('VD12 checkpoint has an invalid learning iteration')
+        if migrate_vd11 and (not restore_curriculum or load_optimizer or not is_vd11
+                             or migrate_vd9 or migrate_vd8 or migrate_vd7
+                             or migrate_vd6 or migrate_vd5_startup):
+            raise ValueError('VD11 migration requires VD11, a fresh optimizer and exclusive curriculum restoration')
+        if migrate_vd9 and (not restore_curriculum or not is_vd9 or migrate_vd8 or migrate_vd7
+                            or migrate_vd6 or migrate_vd5_startup):
+            raise ValueError('VD9 migration requires VD9 experiment and exclusive curriculum restoration')
+        if migrate_vd8 and (not restore_curriculum or not is_vd8 or migrate_vd7 or migrate_vd6 or migrate_vd5_startup):
+            raise ValueError('VD8 migration requires VD8 experiment and exclusive curriculum restoration')
+        if migrate_vd7 and (not restore_curriculum or not is_vd7 or migrate_vd6 or migrate_vd5_startup):
+            raise ValueError('VD7 migration requires VD7 experiment and exclusive curriculum restoration')
+        if migrate_vd6 and (not restore_curriculum or not is_vd6 or migrate_vd5_startup):
+            raise ValueError('VD6 migration requires the VD6 experiment and curriculum restoration')
+        if migrate_vd5_startup and (not restore_curriculum
+                or self.cfg.get("experiment_name") != "b2_z1_vd5_startup_amp"):
+            raise ValueError("VD5 startup migration requires the startup experiment and curriculum restoration")
+        if restore_curriculum:
+            is_vd3 = self.cfg.get("experiment_name") == "b2_z1_vd3_curve_amp"
+            is_vd4 = self.cfg.get("experiment_name") == "b2_z1_vd4_front_calibrated_amp"
+            is_startup = self.cfg.get("experiment_name") == "b2_z1_vd5_startup_amp"
+            is_vd10 = self.cfg.get("experiment_name") == "b2_z1_vd10_hollow_gun_amp"
+            is_vd5 = self.cfg.get("experiment_name") in {"b2_z1_vd5_world_seam_amp", "b2_z1_vd5_startup_amp", "b2_z1_vd6_smooth_amp", "b2_z1_vd7_tcp_amp", "b2_z1_vd8_roll_landing_amp", "b2_z1_vd9_physics_rate_amp", "b2_z1_vd10_hollow_gun_amp", "b2_z1_vd11_motion_quality_amp", "b2_z1_vd12_geometry_guard_amp", "b2_z1_vd13_mount75_amp", "b2_z1_vd14_posture_amp"}
+            version = "VD5" if is_vd5 else "VD4" if is_vd4 else "VD3" if is_vd3 else "VD2"
+            experiment = ("b2_z1_vd5_startup_amp" if is_startup and not migrate_vd5_startup else
+                          "b2_z1_vd5_world_seam_amp" if is_vd5 else
+                          "b2_z1_vd4_front_calibrated_amp" if is_vd4 else
+                          "b2_z1_vd3_curve_amp" if is_vd3 else "b2_z1_vd2_curve_amp")
+            if is_vd6:
+                experiment = 'b2_z1_vd5_startup_amp' if migrate_vd6 else 'b2_z1_vd6_smooth_amp'
+            if is_vd7:
+                experiment = 'b2_z1_vd5_startup_amp' if migrate_vd7 else 'b2_z1_vd7_tcp_amp'
+            if is_vd8:
+                experiment = 'b2_z1_vd5_startup_amp' if migrate_vd8 else 'b2_z1_vd8_roll_landing_amp'
+            if is_vd9:
+                experiment = 'b2_z1_vd5_startup_amp' if migrate_vd9 else 'b2_z1_vd9_physics_rate_amp'
+            if is_vd10:
+                experiment = 'b2_z1_vd10_hollow_gun_amp'
+            if is_vd11:
+                experiment = 'b2_z1_vd10_hollow_gun_amp' if migrate_vd11 else 'b2_z1_vd11_motion_quality_amp'
+            if is_vd12:
+                experiment = 'b2_z1_vd12_geometry_guard_amp'
+            if is_vd13:
+                experiment = 'b2_z1_vd13_mount75_amp'
+                version = 'VD13'
+            if is_vd14:
+                experiment = 'b2_z1_vd13_mount75_amp' if migrate_vd14 else 'b2_z1_vd14_posture_amp'
+                version = 'VD14'
+            if is_vd3 or is_vd4 or is_vd5:
+                if loaded_dict.get("training_experiment_name") != experiment:
+                    raise ValueError(f"{version} resume requires a {version} checkpoint; use a warm-start for another version")
+                if legacy_curriculum is not None:
+                    raise ValueError(f"Legacy VD2 curriculum options cannot override {version} curriculum")
+            state_key = ("vd5_curriculum_state" if is_vd5 else "vd4_curriculum_state" if is_vd4 else
+                         "vd3_curriculum_state" if is_vd3 else "vd2_curriculum_state")
+            state = loaded_dict.get(state_key)
+            if state is None:
+                if is_vd3 or is_vd4 or is_vd5:
+                    raise ValueError(f"Checkpoint has no {version} curriculum state")
+                if legacy_curriculum is None:
+                    raise ValueError("Checkpoint has no VD2 curriculum state. Explicitly supply both "
+                                     "--vd2_legacy_curve_level and --vd2_legacy_position_steps; "
+                                     "these reconstruct an approximation, not the original state.")
+                state = legacy_curriculum_state(self.env, *legacy_curriculum)
+                print(f"[WARNING] Reconstructed approximate legacy VD2 curriculum: {state}")
+            elif legacy_curriculum is not None:
+                raise ValueError("Legacy curriculum options cannot override a checkpoint with saved curriculum state")
+            if is_vd5:
+                restore_vd5_curriculum_state(self.env, state, allow_startup_migration=migrate_vd5_startup)
+            else:
+                restore_curriculum_state(self.env, state)
+            print(f"[INFO] Restored {version} curriculum: {state}")
         # -- Load model
         resumed_training = self.alg.policy.load_state_dict(loaded_dict["model_state_dict"])
         if "discriminator_state_dict" in loaded_dict:
@@ -537,12 +713,14 @@ class AMP_OnPolicyRunner:
         if load_optimizer and resumed_training:
             # -- algorithm optimizer
             self.alg.optimizer.load_state_dict(loaded_dict["optimizer_state_dict"])
+            # PPO's adaptive scheduler keeps a separate scalar alongside Adam.
+            self.alg.learning_rate = self.alg.optimizer.param_groups[0]["lr"]
             # -- RND optimizer if used
             if self.alg.rnd:
                 self.alg.rnd_optimizer.load_state_dict(loaded_dict["rnd_optimizer_state_dict"])
         # -- load current learning iteration
         if resumed_training:
-            self.current_learning_iteration = loaded_dict["iter"]
+            self.current_learning_iteration = 0 if (migrate_vd12 or migrate_vd13 or migrate_vd14) else loaded_dict["iter"]
         return loaded_dict["infos"]
 
     def get_inference_policy(self, device=None):

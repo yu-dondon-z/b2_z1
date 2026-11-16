@@ -15,6 +15,9 @@ from .rewards import *  # noqa: F401, F403
 from .curriculums import *  # noqa: F401, F403
 from .commands import *  # noqa: F401, F403
 from .observations import *  # noqa: F401, F403
+from .vd3_arm_rewards import *  # noqa: F401, F403
+from .vd3_support import *  # noqa: F401, F403
+from .vd5_rewards import *  # noqa: F401, F403
 
 
 from .commands import command_cfg

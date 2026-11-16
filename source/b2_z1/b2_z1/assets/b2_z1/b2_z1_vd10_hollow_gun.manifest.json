@@ -1,0 +1,59 @@
+{
+  "version": "VD10 candidate",
+  "source_sha256": "a6a1f7143d1ce33d6e25b3cbaf7809d17a971c1ec793e6055b365fda9bb39be0",
+  "urdf_sha256": "975d949007339b063dd0bad11d099cd97a04dd11ec1f1e506acff86a684f9103",
+  "mesh_sha256": "49b23983831d6ee10e7f8ce1a940ae056c9815c9e1ac760b77677203f81839d5",
+  "gun_mass_kg": 2.93,
+  "nominal_robot_mass_kg": 81.92902020000001,
+  "outer_diameter_m": 0.056,
+  "inner_diameter_m": 0.052,
+  "length_m": 1.1,
+  "axial_inertia_kg_m2": 0.0021389,
+  "transverse_inertia_kg_m2": 0.29651111666666674,
+  "clamp_center_in_link06_m": [
+    0.075,
+    0.0,
+    0.1
+  ],
+  "rear_from_clamp_m": 0.2,
+  "tip_from_clamp_m": 0.9000000000000001,
+  "tcp_in_link06_m": [
+    0.9750000000000001,
+    0.0,
+    0.1
+  ],
+  "link06_combined_mass_kg": 3.2187581,
+  "link06_combined_com_m": [
+    0.38903995318750123,
+    -1.5564863463955246e-05,
+    0.09089982091096564
+  ],
+  "link06_combined_inertia_kg_m2": [
+    [
+      0.005026923864946012,
+      -1.708046959736788e-05,
+      -0.010687389910048882
+    ],
+    [
+      -1.708046959736788e-05,
+      0.34159733897570543,
+      -4.5261215408060674e-06
+    ],
+    [
+      -0.010687389910048882,
+      -4.5261215408060674e-06,
+      0.33889193093571174
+    ]
+  ],
+  "gun_axis_in_link06": [
+    1,
+    0,
+    0
+  ],
+  "clamp_mass_kg": 0,
+  "assumptions": [
+    "100 mm upward means local +Z at the joint6=0 flange pose",
+    "clamp centre is 200 mm from the tube rear end",
+    "collision uses solid outer envelope; the visual mesh and inertial are hollow"
+  ]
+}

@@ -51,3 +51,18 @@ class B2Z1ManagerAMPBasedRLEnv(B2Z1ManagerBasedRLEnv):
         self.sim.forward()
         # Both independent world-space curves must start from the final reset pose.
         self.command_manager.reset(ref_ids)
+
+
+class B2Z1VD10ManagerAMPBasedRLEnv(B2Z1ManagerAMPBasedRLEnv):
+    """Sample VD10 startup commands after both nominal and AMP resets finish."""
+
+    def _reset_idx(self, env_ids):
+        super()._reset_idx(env_ids)
+        if len(env_ids) == 0:
+            return
+        # The parent's command reset precedes counter zeroing and may precede
+        # nominal-pose forward kinematics. Refresh from the final physical pose
+        # before the first action/observation, also for explicit env.reset().
+        self.scene.write_data_to_sim()
+        self.sim.forward()
+        self.command_manager.reset(env_ids)

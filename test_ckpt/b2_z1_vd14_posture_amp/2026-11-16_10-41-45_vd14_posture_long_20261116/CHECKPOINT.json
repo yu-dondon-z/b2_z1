@@ -1,0 +1,38 @@
+{
+  "version": "VD14",
+  "snapshot_date": "2026-11-16",
+  "source_run": "logs/rsl_rl/b2_z1_vd14_posture_amp/2026-11-16_10-41-45_vd14_posture_long_20261116",
+  "training_experiment_name": "b2_z1_vd14_posture_amp",
+  "task_id": "Unitree-b2z1-VD14-Velocity",
+  "checkpoint": "model_5999.pt",
+  "iteration": 5999,
+  "completed_training_iterations": 6000,
+  "status": "local_simulation_candidate_not_hardware_release",
+  "initial_curriculum_note": "vd5_initial_curriculum.json records the run's initial state; final curriculum is stored inside model_5999.pt.",
+  "files": {
+    "model_5999.pt": {
+      "size_bytes": 12440457,
+      "sha256": "49e41e91c9e82e178a7e8ea9f2f835a6b8e440a131ebaeae3c2911f68f5d3372"
+    },
+    "params/agent.pkl": {
+      "size_bytes": 2878,
+      "sha256": "6d9233ce24eca44a4d60b6324b9bd54fea6055e9ae0a6b8d6f2f79328fce89fe"
+    },
+    "params/agent.yaml": {
+      "size_bytes": 2761,
+      "sha256": "cd88f3aaadb7b588582e113e3f2111bd099b49251cec53ac6d47ef8a703c5263"
+    },
+    "params/env.pkl": {
+      "size_bytes": 32875,
+      "sha256": "bafced3fbea31c15c5afd1096f63c1ec880da1f77387de2e32991e51f47b197a"
+    },
+    "params/env.yaml": {
+      "size_bytes": 67233,
+      "sha256": "742a3e07ad80c9188842604f8e577569118cb27a5a556b76bf744b5ca61ed64d"
+    },
+    "vd5_initial_curriculum.json": {
+      "size_bytes": 1375,
+      "sha256": "20186a2b9c2b0c21fb21d537aa6e1b01b8ff4a65dfc9ff1b50e54e5e7f5bca1a"
+    }
+  }
+}

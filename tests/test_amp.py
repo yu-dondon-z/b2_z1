@@ -27,6 +27,7 @@ with patch.dict(sys.modules, {"b2_z1": package}):
     from b2_z1.rsl_rl.storage import ReplayBuffer
     from b2_z1.rsl_rl.utils.amp_utils import quaternion_slerp
     from b2_z1.rsl_rl.runners import AMP_OnPolicyRunner
+    from b2_z1.rsl_rl.utils.vd5_curriculum_state import capture_vd5_curriculum_state
 
 
 class MotionTests(unittest.TestCase):
@@ -107,6 +108,55 @@ class FakeEnv:
         return observations, torch.ones(4), torch.tensor([0, 1, 0, 0]), extras
 
 
+def load_vd3_symmetry():
+    """Import the torch-only mirror implementation without task registration."""
+    mdp_path = PACKAGE / "tasks/manager_based/b2_z1/mdp"
+    package_name = "vd3_amp_symmetry_cpu"
+    symmetry_package = types.ModuleType(package_name)
+    symmetry_package.__path__ = [str(mdp_path)]
+    with patch.dict(sys.modules, {package_name: symmetry_package}):
+        spec = importlib.util.spec_from_file_location(
+            package_name + ".vd3_symmetry", mdp_path / "vd3_symmetry.py"
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    return module
+
+
+class FakeSymmetryEnv(FakeEnv):
+    """VD3 actor layout and articulation metadata with the real interleaving."""
+
+    def __init__(self, symmetry):
+        super().__init__()
+        robot = self.scene["robot"]
+        robot.joint_names, robot.device = symmetry.JOINT_NAMES, "cpu"
+        robot.data.default_joint_pos = torch.tensor([
+            0.1, -0.1, 0.1, -0.1, 0.8, 0.8, 1.0, 1.0, 0.0,
+            -1.5, -1.5, -1.5, -1.5, 2.55, -1.6, -1.4, 0.0, 0.0,
+        ]).expand(self.num_envs, -1)
+        robot.data.default_joint_vel = torch.zeros(self.num_envs, 18)
+        self.observation_manager = types.SimpleNamespace(
+            active_terms={"policy": symmetry._POLICY_TERMS},
+            group_obs_term_dim={"policy": symmetry._POLICY_DIMS},
+        )
+        action = types.SimpleNamespace(
+            _joint_names=robot.joint_names, _scale=0.25,
+            cfg=types.SimpleNamespace(use_default_offset=True),
+        )
+        self.action_manager = types.SimpleNamespace(
+            active_terms=["JointPositionAction"], get_term=lambda name: action,
+        )
+
+    def get_observations(self):
+        observations = torch.linspace(-0.3, 0.3, 70).repeat(self.num_envs, 1)
+        observations[:, 3:6] = torch.tensor([-1.02, 0.03, -0.3])
+        observations[:, 6:10] = torch.tensor([1.0, 0.0, 0.0, 0.0])
+        return observations, {"observations": {
+            "critic": torch.zeros(self.num_envs, 12),
+            "amp_obs": torch.zeros(self.num_envs, 43),
+        }}
+
+
 def runner_config():
     return {
         "algorithm": {"class_name": "AMP_PPO", "num_learning_epochs": 1, "num_mini_batches": 1},
@@ -121,6 +171,97 @@ def runner_config():
 
 
 class TrainingTests(unittest.TestCase):
+    def test_real_amp_update_applies_mirror_loss_to_legs_without_augmenting_ppo(self):
+        torch.manual_seed(23)
+        symmetry = load_vd3_symmetry()
+        cfg = runner_config()
+        leg_indices = (0, 1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12)
+        arm_indices = (8, 13, 14, 15, 16, 17)
+        cfg["algorithm"]["symmetry_cfg"] = {
+            "use_data_augmentation": False, "use_mirror_loss": True,
+            "mirror_loss_coeff": 0.2, "mirror_action_indices": leg_indices,
+            "data_augmentation_func": symmetry.vd3_left_right,
+        }
+        env = FakeSymmetryEnv(symmetry)
+        with contextlib.redirect_stdout(io.StringIO()):
+            runner = AMP_OnPolicyRunner(env, cfg, device="cpu")
+        # An asymmetric, deterministic output makes a missing mirror term fail
+        # independently of a lucky random initialization.
+        with torch.no_grad():
+            runner.alg.policy.actor[-1].weight.zero_()
+            runner.alg.policy.actor[-1].bias.copy_(torch.arange(1.0, 19.0) / 10)
+
+        actor_outputs, critic_batches, likelihood_batches, updates = [], [], [], []
+
+        def retain_actor_output(module, args, output):
+            if torch.is_grad_enabled():
+                output.retain_grad()
+                actor_outputs.append(output)
+
+        def record_critic_batch(module, args, output):
+            if torch.is_grad_enabled():
+                critic_batches.append(args[0].shape[0])
+
+        original_log_prob = runner.alg.policy.get_actions_log_prob
+
+        def record_likelihood(actions):
+            if torch.is_grad_enabled():
+                likelihood_batches.append(tuple(actions.shape))
+            return original_log_prob(actions)
+
+        original_update = runner.alg.update
+
+        def record_update():
+            self.assertEqual(tuple(runner.alg.storage.observations.shape), (2, 4, 70))
+            self.assertEqual(tuple(runner.alg.storage.actions.shape), (2, 4, 18))
+            updates.append(original_update())
+            return updates[-1]
+
+        actor_hook = runner.alg.policy.actor.register_forward_hook(retain_actor_output)
+        critic_hook = runner.alg.policy.critic.register_forward_hook(record_critic_batch)
+        try:
+            with contextlib.redirect_stdout(io.StringIO()), patch.object(
+                runner.alg.policy, "get_actions_log_prob", side_effect=record_likelihood
+            ), patch.object(runner.alg, "update", side_effect=record_update):
+                runner.learn(1)
+        finally:
+            actor_hook.remove()
+            critic_hook.remove()
+
+        self.assertEqual(len(updates), 1)
+        self.assertTrue(all(math.isfinite(value) for value in updates[0].values()))
+        self.assertGreater(updates[0]["symmetry"], 0)
+        self.assertEqual([tuple(output.shape) for output in actor_outputs], [(8, 18), (16, 18)])
+        self.assertEqual(critic_batches, [8])
+        self.assertEqual(likelihood_batches, [(8, 18)])
+        self.assertTrue(env._vd3_leg_symmetry_validated)
+
+        # This second actor invocation feeds only the mirror branch. Its output
+        # gradient therefore isolates the new loss from PPO/entropy gradients.
+        mirror_grad = actor_outputs[1].grad
+        self.assertIsNotNone(mirror_grad)
+        self.assertTrue(torch.isfinite(mirror_grad).all())
+        torch.testing.assert_close(mirror_grad[:8], torch.zeros_like(mirror_grad[:8]), atol=0, rtol=0)
+        torch.testing.assert_close(
+            mirror_grad[8:, list(arm_indices)], torch.zeros(8, 6), atol=0, rtol=0
+        )
+        self.assertTrue((mirror_grad[8:, list(leg_indices)].abs() > 0).all())
+
+    def test_amp_constructor_rejects_invalid_mirror_action_masks(self):
+        symmetry = load_vd3_symmetry()
+        for indices in ([], [0, 0], [-1], [18], [1.0], [True]):
+            with self.subTest(indices=indices):
+                cfg = runner_config()
+                cfg["algorithm"]["symmetry_cfg"] = {
+                    "use_data_augmentation": False, "use_mirror_loss": True,
+                    "mirror_loss_coeff": 0.2, "mirror_action_indices": indices,
+                    "data_augmentation_func": symmetry.vd3_left_right,
+                }
+                with contextlib.redirect_stdout(io.StringIO()), self.assertRaisesRegex(
+                    ValueError, "mirror_action_indices"
+                ):
+                    AMP_OnPolicyRunner(FakeSymmetryEnv(symmetry), cfg, device="cpu")
+
     def test_training_uses_terminal_states_and_checkpoint_restores_prior(self):
         cfg = runner_config()
         with contextlib.redirect_stdout(io.StringIO()):

@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "common_curriculum": {
+    "version": 1,
+    "curve_level": 0.1,
+    "position_ranges": {
+      "pos_x": [
+        -1.08,
+        -0.96
+      ],
+      "pos_y": [
+        -0.15,
+        0.15
+      ],
+      "pos_z": [
+        -0.34,
+        -0.26
+      ],
+      "roll": [
+        0.0,
+        0.0
+      ],
+      "pitch": [
+        1.1207963267948966,
+        1.1207963267948966
+      ],
+      "yaw": [
+        3.141592653589793,
+        3.141592653589793
+      ]
+    },
+    "curve_elapsed_steps": 67547,
+    "position_elapsed_steps": 84048
+  },
+  "ground_blend": 0.8404799999988097,
+  "ground_transition_steps": 100000,
+  "seam_trailing_distance_m": 0.7,
+  "startup_profile": {
+    "version": 1,
+    "duration_s": 2.0,
+    "reference_initialization_prob": 0.8,
+    "nominal_base_height_m": 0.5,
+    "nominal_joint_velocity_range": [
+      0.0,
+      0.0
+    ]
+  }
+}

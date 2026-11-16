@@ -1,0 +1,1 @@
+archive/vd3/train_vd3_symmetry.sh

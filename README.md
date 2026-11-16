@@ -1,4 +1,25 @@
-# Template for Isaac Lab Projects
+# B2 + Z1 训练工作区
+
+文档与脚本导航见 [项目文档索引](docs/README.md) 和 [脚本索引](scripts/README.md)。
+2026-11-16：当前候选为 **VD14最终5999（75cm夹持点）**；两端30秒动作回放完成、姿态改善。视觉转换／识别／四元数连续性修正后挥杆减轻，后视支持不足改为零行走等待／恢复，60秒样本完成；仍未完成视觉及实机验收。
+本分支包含最终模型与训练参数，见 [VD14 GitHub快照](docs/VD14_GITHUB_SYNC_20261116.md)。配套[部署源码与当前结果](https://github.com/yu-dondon-z/rl_sar_b2_z1_v1/blob/VD14/docs/reports/vd14/VD14_PLAY_MUJOCO_20261116.md)；[训练／TensorBoard／中止恢复](docs/VD14_POSTURE_TRAINING_20261116.md)。
+旧脚本与说明已归入版本档案；训练源码、资产、日志和检查点保持原位置。
+
+## 已同步基线：VD5 Startup（历史发布说明）
+
+以下记录为 **VD5 Startup**，从本地 `/home/dong/b2_z1_VD2` 同步到
+[`yu-dondon-z/b2_z1` 的 `VD5` 分支](https://github.com/yu-dondon-z/b2_z1/tree/VD5)。
+版本、任务和检查点信息见 [CODE_VERSION.json](CODE_VERSION.json)。
+
+- VD5基线检查点：[`model_4498.pt`](test_ckpt/b2_z1_vd5_startup_amp/2026-11-10_11-47-57_vd5_startup_80ref_20stand_continue1000/model_4498.pt)，同目录保存训练参数和 SHA256 清单。
+- VD5训练效果与限制：[VD5 任务跟踪检查](docs/archive/vd5/VD5_TASK_TRACKING_REVIEW_20261110.md)。
+- 同步内容、检查点使用和验证方式：[VD5 GitHub 版本说明](docs/archive/vd5/VD5_GITHUB_SYNC_20261110.md)。
+- 焊缝命令与训练方案：[VD5 世界焊缝命令](docs/archive/vd5/VD5_WORLD_SEAM_COMMANDS_20261109.md)。
+
+该检查点是 Isaac Lab 中普通站姿起步的仿真候选，底盘路径偏移和足端避线仍需改进；
+本版本没有验证真实相机输入或实机闭环。
+
+## Isaac Lab Project Setup
 
 ## Overview
 

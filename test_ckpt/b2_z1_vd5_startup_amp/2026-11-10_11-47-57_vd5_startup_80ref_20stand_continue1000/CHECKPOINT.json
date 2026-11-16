@@ -1,0 +1,42 @@
+{
+  "version": "VD5",
+  "variant": "Startup",
+  "snapshot_date": "2026-11-10",
+  "source_run": "logs/rsl_rl/b2_z1_vd5_startup_amp/2026-11-10_11-47-57_vd5_startup_80ref_20stand_continue1000",
+  "training_experiment_name": "b2_z1_vd5_startup_amp",
+  "task_id": "Unitree-b2z1-VD5-Startup-Velocity",
+  "recommended_checkpoint": "model_4498.pt",
+  "iteration": 4498,
+  "recommendation_scope": "Normal standing startup in Isaac Lab simulation; see docs/VD5_TASK_TRACKING_REVIEW_20261110.md",
+  "initial_curriculum_note": "vd5_initial_curriculum.json records the start of this run. The checkpoint contains the final curriculum state.",
+  "files": {
+    ".gitattributes": {
+      "size_bytes": 92,
+      "sha256": "96d40fc967a576a52b8d8237816ecfefb307da73ef31b1af24656329b585fea9"
+    },
+    "model_4498.pt": {
+      "size_bytes": 12438537,
+      "sha256": "9af8e2ca67382d3186bb9ea145930c25797b06e6189963bb1d996fee91f3fedf"
+    },
+    "params/agent.pkl": {
+      "size_bytes": 2955,
+      "sha256": "1c5a43659010a19dfe699a420da286c4a8eaa46418ca0695943cf3086959f7d2"
+    },
+    "params/agent.yaml": {
+      "size_bytes": 2832,
+      "sha256": "8fc11b40e9b83f18ff3f358b601a473fe4cf84caca2a71cae60aa05426de6d83"
+    },
+    "params/env.pkl": {
+      "size_bytes": 29310,
+      "sha256": "d5ec06530c110261d0de8547eef48d58730aefeaec8b3c8998b7152d5997c7c8"
+    },
+    "params/env.yaml": {
+      "size_bytes": 60447,
+      "sha256": "e092e262d28bded4219925c6462f3564a4b9d8e0f80810ab338c9244fc67e51c"
+    },
+    "vd5_initial_curriculum.json": {
+      "size_bytes": 883,
+      "sha256": "e1ae159e1b1f9e57558526657ce7a5bf0c5c358c31fbcf39dc7eff345f9a7af9"
+    }
+  }
+}

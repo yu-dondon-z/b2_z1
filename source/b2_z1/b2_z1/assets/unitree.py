@@ -103,7 +103,11 @@ class UnitreeUrdfFileCfg(sim_utils.UrdfFileCfg):
 
 B2_Z1_GUN_CFG = UnitreeArticulationCfg(
     spawn=UnitreeUrdfFileCfg(
-        asset_path=f"{B2Z1_ASSETS_DIR}/b2_z1_gun.urdf",
+        # VD3 folds the zero-load gun shapes into link06. No zero-mass PhysX
+        # rigid body is spawned, and the original URDF remains available for FK.
+        asset_path=f"{B2Z1_ASSETS_DIR}/b2_z1_vd3_zero_gun.urdf",
+        merge_fixed_joints=True,
+        usd_dir=os.environ.get("VD3_ASSET_CACHE", "/dev/shm/vd3_training_assets"),
         self_collision=False,
     ),
     
@@ -178,6 +182,25 @@ B2_Z1_GUN_CFG = UnitreeArticulationCfg(
         ),
         
     },
+)
+
+
+# Separate measured-pipe candidate. Existing B2_Z1_GUN_CFG and old actors keep
+# their historical geometry/mass; do not silently substitute this into VD9.
+B2_Z1_HOLLOW_GUN_CFG = B2_Z1_GUN_CFG.replace(
+    spawn=B2_Z1_GUN_CFG.spawn.replace(
+        asset_path=f"{B2Z1_ASSETS_DIR}/b2_z1_vd10_hollow_gun.urdf",
+        replace_cylinders_with_capsules=False,
+        usd_dir=os.environ.get("VD10_ASSET_CACHE", "/dev/shm/vd10_hollow_gun_assets"),
+    )
+)
+
+# Separate 750mm clamp-to-tip candidate. Never substitute it into VD10/11/12.
+B2_Z1_MOUNT75_CFG = B2_Z1_HOLLOW_GUN_CFG.replace(
+    spawn=B2_Z1_HOLLOW_GUN_CFG.spawn.replace(
+        asset_path=f"{B2Z1_ASSETS_DIR}/b2_z1_vd13_mount75.urdf",
+        usd_dir=os.environ.get("VD13_ASSET_CACHE", "/dev/shm/vd13_mount75_assets"),
+    )
 )
 
 

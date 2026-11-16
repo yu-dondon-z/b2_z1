@@ -1,2 +1,2 @@
 from .b2z1_rl_env import B2Z1ManagerBasedRLEnv
-from .b2z1_rl_amp_env import B2Z1ManagerAMPBasedRLEnv
+from .b2z1_rl_amp_env import B2Z1ManagerAMPBasedRLEnv, B2Z1VD10ManagerAMPBasedRLEnv

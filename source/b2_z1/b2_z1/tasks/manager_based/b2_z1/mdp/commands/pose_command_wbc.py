@@ -37,6 +37,7 @@ from isaaclab.utils.math import (
 )
 
 from .curve_geometry import cubic_bezier
+from ..tcp_frame import tcp_parent, tcp_pose_w
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
@@ -67,7 +68,8 @@ class UniformPoseWBCCommand(CommandTerm):
         super().__init__(cfg, env)
 
         self.robot: Articulation = env.scene[cfg.asset_name]
-        self.body_idx = self.robot.find_bodies(cfg.body_name)[0][0]
+        # The TCP is a fixed frame of link06 in VD3, not a mass-bearing body.
+        self.body_idx = tcp_parent(self.robot)[0]
         self.base_idx = self.robot.find_bodies(cfg.base_name)[0][0]
 
         self.pose_command = torch.zeros(self.num_envs, 7, device=self.device)
@@ -126,7 +128,7 @@ class UniformPoseWBCCommand(CommandTerm):
         return self.pose_command
 
     def _update_metrics(self):
-        ee_pos_w = self.robot.data.body_pos_w[:, self.body_idx]
+        ee_pos_w, curr_quat_w = tcp_pose_w(self.robot)
         base_pos_w = self.robot.data.body_pos_w[:, self.base_idx]
         base_quat_w = self.robot.data.body_state_w[:, self.base_idx, 3:7]
 
@@ -134,7 +136,6 @@ class UniformPoseWBCCommand(CommandTerm):
         pos_error = ee_pos_base - self.pose_command[:, :3]
 
         des_quat_w = quat_mul(base_quat_w, self.pose_command[:, 3:7])
-        curr_quat_w = self.robot.data.body_state_w[:, self.body_idx, 3:7]
         source_quat_norm = quat_mul(des_quat_w, quat_conjugate(des_quat_w))[:, 0]
         source_quat_inv = quat_conjugate(des_quat_w) / source_quat_norm.unsqueeze(-1)
         quat_error = quat_mul(curr_quat_w, source_quat_inv)
@@ -197,8 +198,8 @@ class UniformPoseWBCCommand(CommandTerm):
     def _capture_current_pose_as_start(self, env_ids: torch.Tensor):
         base_pos_w = self.robot.data.body_pos_w[env_ids, self.base_idx]
         base_quat_w = self.robot.data.body_state_w[env_ids, self.base_idx, 3:7]
-        ee_pos_w = self.robot.data.body_pos_w[env_ids, self.body_idx]
-        ee_quat_w = self.robot.data.body_state_w[env_ids, self.body_idx, 3:7]
+        tcp_pos_w, tcp_quat_w = tcp_pose_w(self.robot)
+        ee_pos_w, ee_quat_w = tcp_pos_w[env_ids], tcp_quat_w[env_ids]
 
         self.pose_start_pos_w[env_ids] = ee_pos_w
         self.pose_start[env_ids, :3] = quat_apply_inverse(base_quat_w, ee_pos_w - base_pos_w)
@@ -349,8 +350,8 @@ class UniformPoseWBCCommand(CommandTerm):
             self.tracked_trajectory_orientations_w.reshape(-1, 4),
         )
 
-        body_pose_w = self.robot.data.body_state_w[:, self.body_idx]
-        self.current_pose_visualizer.visualize(body_pose_w[:, :3], body_pose_w[:, 3:7])
+        current_pos_w, current_quat_w = tcp_pose_w(self.robot)
+        self.current_pose_visualizer.visualize(current_pos_w, current_quat_w)
 
     def _update_trajectory_visualization(self):
         sample_t = self._trajectory_samples.view(1, -1, 1)
@@ -388,9 +389,10 @@ class UniformPoseWBCCommand(CommandTerm):
 
     def _get_current_trajectory_points(self, env_ids: torch.Tensor | None = None) -> torch.Tensor:
         ids = slice(None) if env_ids is None else env_ids
+        tcp_pos_w, _ = tcp_pose_w(self.robot)
         return quat_apply_inverse(
             self.robot.data.body_state_w[ids, self.base_idx, 3:7],
-            self.robot.data.body_pos_w[ids, self.body_idx] - self.robot.data.body_pos_w[ids, self.base_idx],
+            tcp_pos_w[ids] - self.robot.data.body_pos_w[ids, self.base_idx],
         )
 
     def _get_tracked_trajectory_points_w(self) -> torch.Tensor:

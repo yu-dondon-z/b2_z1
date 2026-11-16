@@ -15,6 +15,7 @@ class B2Z1ManagerBasedRLEnv(ManagerBasedRLEnv):
             render_mode: The render mode for the environment. Defaults to None.
             **kwargs: Additional keyword arguments (e.g., env_cfg_entry_point from gym.register).
         """
+        self._physics_step_callbacks = []
         # Rebuild both mounts after Hydra/CLI calibration overrides, preserving rendering mode.
         for scene_name, command_name, make_camera_cfg in (
             ("base_camera", "base_velocity", make_curve_camera_cfg),
@@ -96,6 +97,8 @@ class B2Z1ManagerBasedRLEnv(ManagerBasedRLEnv):
                 self.sim.render()
             # update buffers at sim dt
             self.scene.update(dt=self.physics_dt)
+            for callback in tuple(self._physics_step_callbacks):
+                callback()
 
         # post-step:
         # -- update env counters (used for curriculum generation)

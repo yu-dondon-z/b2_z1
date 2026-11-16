@@ -1,0 +1,2 @@
+# This checkpoint is stored as a regular Git blob (12 MiB).
+*.pt -filter -diff -merge -text

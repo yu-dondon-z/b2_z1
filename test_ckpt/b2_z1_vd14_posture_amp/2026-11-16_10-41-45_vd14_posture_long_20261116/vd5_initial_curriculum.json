@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "common_curriculum": {
+    "version": 1,
+    "curve_level": 0.1,
+    "position_ranges": {
+      "pos_x": [
+        -0.96,
+        -0.94
+      ],
+      "pos_y": [
+        -0.01,
+        0.01
+      ],
+      "pos_z": [
+        0.34,
+        0.36
+      ],
+      "roll": [
+        0.0,
+        0.0
+      ],
+      "pitch": [
+        0.3,
+        0.3
+      ],
+      "yaw": [
+        3.141592653589793,
+        3.141592653589793
+      ]
+    },
+    "curve_elapsed_steps": 130824,
+    "position_elapsed_steps": 148824
+  },
+  "ground_blend": 1.0,
+  "ground_transition_steps": 20000,
+  "seam_trailing_distance_m": 0.95,
+  "startup_profile": {
+    "version": 1,
+    "duration_s": 2.0,
+    "reference_initialization_prob": 0.8,
+    "nominal_base_height_m": 0.5,
+    "nominal_joint_velocity_range": [
+      0.0,
+      0.0
+    ],
+    "vd10": {
+      "version": 2,
+      "safe_pitch_rad": 0.3,
+      "seam_pitch_rad": 1.1207963267948966,
+      "working_surface_clearance_m": 0.005,
+      "tube_length_m": 1.1,
+      "tube_outer_radius_m": 0.028,
+      "reset_commands_after_forward": true,
+      "mount_version": 13,
+      "tcp_in_link06_m": [
+        0.825,
+        0.0,
+        0.1
+      ],
+      "clamp_to_tip_m": 0.75,
+      "arm_joint_reset_rad": [
+        0.0,
+        0.66647356,
+        -1.25178768,
+        0.88531411,
+        0.0,
+        0.0
+      ]
+    }
+  }
+}
